@@ -1,0 +1,13 @@
+name = "SelfconsistentBorn"
+uuid = "26c8d85c-21b4-456e-8614-f24489651b71"
+authors = ["Vasilii Vadimov"]
+version = "1.0.0-DEV"
+
+[compat]
+julia = "1.6.7"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
