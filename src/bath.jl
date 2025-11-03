@@ -9,9 +9,13 @@ advanced(b :: BosonicBath, ω) = (b.R(ω'))'
 advanced(b :: BosonicBath, ω :: Real) = (b.R(ω))'
 keldysh(b :: BosonicBath, ω) = b.K(ω)
 keldysh(b :: BosonicBath{<: Any, <: Any, <: Real}, ω) = (retarded(b, ω) - advanced(b, ω)) * coth(ω / (2.0 * b.K)) * 0.5
-keldysh(b :: BosonicBath{<: Any, <: Any, <: Real}, ω :: Real) = let r = retarded(b, ω), x = coth(ω / (2.0 * b.K))
-    (r - r') * x * 0.5
-end
+keldysh(b :: BosonicBath{<: Any, <: Any, <: Real}, ω :: Real) = iszero(ω) ? (
+    (derivative(b.R, 0.0) |> (x -> (x - x') * 0.5)) * 2.0 * b.K
+) : (
+    let r = retarded(b, ω), x = coth(ω / (2.0 * b.K))
+        (r - r') * x * 0.5
+    end
+)
 
 couplings(b :: BosonicBath) = b.qs
 coupling(b :: BosonicBath, i) = b.qs[i]

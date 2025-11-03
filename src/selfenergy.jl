@@ -1,3 +1,5 @@
+export SelfEnergy
+
 mutable struct SelfEnergy{T <: Real, S}
     ωs :: Vector{T}
     R :: Vector{S}
@@ -70,6 +72,8 @@ function retarded(Σ :: SelfEnergy, x :: Real)
     end
     return Re + im * Σ.R[end]
 end
+
+advanced(Σ :: SelfEnergy, x :: Real) = retarded(Σ, x)'
 
 function keldysh(Σ :: SelfEnergy, ω :: Real)
     j = searchsortedfirst(Σ.ωs, ω)
