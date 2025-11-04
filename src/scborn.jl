@@ -1,97 +1,76 @@
-struct SCBorn{T, S <: SelfEnergy, B <: BosonicBath}
+struct SCBorn{T, S <: GreensFunction, B <: BosonicBath}
     H :: T
-    Σ :: S
+    G :: S
     baths :: Vector{B}
 end
 
-green_retarded(s :: SCBorn, ω) = inv(ω * I - s.H - retarded(s.Σ, ω))
-green_advanced(s :: SCBorn, ω) = (green_retarded(s, ω'))'
-green_advanced(s :: SCBorn, ω :: Real) = (green_retarded(s, ω))'
-green_keldysh(s :: SCBorn, ω) = green_retarded(s, ω) * keldysh(s.Σ, ω) * green_advanced(s, ω)
-green_keldysh(s :: SCBorn, ω :: Real) = let r = green_retarded(s, ω), k = keldysh(s.Σ, ω)
-    r * k * (r')
-end
-green_lesser(s :: SCBorn, ω :: Real) = let r = green_retarded(s, ω), k = keldysh(s.Σ, ω)
-    (r * k * (r') + (r' - r)) / 2.0
-end
-green_keldysh_dμ(s :: SCBorn, ω :: Real) = let r = green_retarded(s, ω), k = keldysh(s.Σ, ω)
-    -r * (r * k + k * r') * r'
+green_retarded(s :: SCBorn, ω) = retarded(s.G, ω)
+green_advanced(s :: SCBorn, ω) = advanced(s.G, ω)
+green_keldysh(s :: SCBorn, ω) = keldysh(s.G, ω)
+green_lesser(s :: SCBorn, ω :: Real) = let r = green_retarded(s, ω), k = green_keldysh(s, ω)
+    (r - r' - k) / 2.0
 end
 
-function selfconsistensy(s :: SCBorn{<: Any, SelfEnergy{T, S}, <: Any}, ωs; quadgk_kwargs...) where {T, S}
-    Σ_R = S[]
-    Σ_K = S[]
+function selfconsistensy(s :: SCBorn{<: Any, GreensFunction{T, S}, <: Any}, ωs; quadgk_kwargs...) where {T, S}
+    G_R = S[]
+    G_K = S[]
     
-    GR = let s = s; ω -> green_retarded(s, ω) end
-    GK = let s = s; ω -> green_keldysh(s, ω) end
     for ω in ωs
-        tmp_R = zero(s.Σ.V)
-        tmp_K = zero(s.Σ.V)
+        Σ_R = nothing
+        Σ_K = nothing
         for bath in s.baths
-            R(ω′) = let gr = GR(ω′), σk = keldysh(s.Σ, ω′) 
-                0.5 * retarded(bath, ω - ω′, gr * σk * (gr')) + keldysh(bath, ω - ω′, gr)
+            R(ω′) = let r = green_retarded(s, ω′), k = green_keldysh(s, ω′) 
+                0.5 * retarded(bath, ω - ω′, k) + keldysh(bath, ω - ω′, r)
             end
-            K(ω′) = let gr = GR(ω′), σk = keldysh(s.Σ, ω′) 
-                0.5 * retarded(bath, ω - ω′, gr) + 
-                0.5 * advanced(bath, ω - ω′, gr') +
-                keldysh(bath, ω - ω′, gr * σk * (gr'))
+            K(ω′) = let r = green_retarded(s, ω′), k = green_keldysh(s, ω′) 
+                0.5 * spectral_dos(bath, ω - ω′, r - r') +
+                keldysh(bath, ω - ω′, k)
             end
-            tmp_R += im * sum(
-                quadgk(R, a, b; quadgk_kwargs...)[1] for (a, b) in zip([-Inf; s.Σ.ωs], [s.Σ.ωs; Inf])
-            ) / (2π)
-            tmp_K += im * sum(
-                quadgk(K, a, b; quadgk_kwargs...)[1] for (a, b) in zip([-Inf; s.Σ.ωs], [s.Σ.ωs; Inf])
-            ) / (2π)
+            if Σ_R isa Nothing
+                Σ_R = im * sum(
+                    quadgk(R, a, b; quadgk_kwargs...)[1] for (a, b) in zip([-Inf; s.G.ωs], [s.G.ωs; Inf])
+                ) / (2π)
+                Σ_K = im * sum(
+                    quadgk(K, a, b; quadgk_kwargs...)[1] for (a, b) in zip([-Inf; s.G.ωs], [s.G.ωs; Inf])
+                ) / (2π)
+            else
+                Σ_R .+= im * sum(
+                    quadgk(R, a, b; quadgk_kwargs...)[1] for (a, b) in zip([-Inf; s.G.ωs], [s.G.ωs; Inf])
+                ) / (2π)
+                Σ_K .+= im * sum(
+                    quadgk(K, a, b; quadgk_kwargs...)[1] for (a, b) in zip([-Inf; s.G.ωs], [s.G.ωs; Inf])
+                ) / (2π)
+            end
+            
         end
-        push!(Σ_R, tmp_R)
-        push!(Σ_K, tmp_K)
+        #display(Σ_R)
+        #display(Σ_K)
+        push!(G_R, inv(ω * I - s.H - Σ_R))
+        push!(G_K, G_R[end] * Σ_K * G_R[end]')
     end
-    GK_int = im * sum(
-        quadgk(GK, a, b; quadgk_kwargs...)[1] for (a, b) in zip([-Inf; s.Σ.ωs], [s.Σ.ωs; Inf])
-    ) / (2π)
+    #display(G_R[1])
+    #display(G_K[1])
     return (
-        sum(retarded(bath, Inf, GK_int) * 0.5 for bath in s.baths),
-        map(x -> (-0.5im * (x - x')), Σ_R),
-        map(x -> (-0.5im * (x - x')), Σ_K)
+        map(x -> (-0.5im * (x - x')), G_R),
+        map(x -> (-0.5im * (x - x')), G_K)
     )
 end
 
-density_matrix(s :: SCBorn; quadgk_kwargs...) = -im * sum(
-    quadgk(
-        let s = s;
-            ω -> green_lesser(s, ω)
-        end,
-        a, b; quadgk_kwargs...
-    )[1] for (a, b) in zip([-Inf; s.Σ.ωs], [s.Σ.ωs; Inf])
-) / (2π)
-
-density_matrix_dμ(s :: SCBorn; quadgk_kwargs...) = -im * sum(
-    quadgk(
-        let s = s;
-            ω -> green_keldysh_dμ(s, ω)
-        end,
-        a, b; quadgk_kwargs...
-    )[1] for (a, b) in zip([-Inf; s.Σ.ωs], [s.Σ.ωs; Inf])
-) / (4π)
-
+density_matrix(s :: SCBorn) = im * (int_RA(s.G) - int_K(s.G)) / (4π)
 
 function simple_iteration!(s :: SCBorn, η :: Real = 0.5; quadgk_kwargs...)
     if !(0.0 < η <= 1.0)
         throw(ArgumentError("Coefficient in simple iteration must be in (0, 1]"))
     end
-    V, R, K = selfconsistensy(s, s.Σ.ωs; quadgk_kwargs...)
+    R, K = selfconsistensy(s, s.G.ωs[2 : end - 1]; quadgk_kwargs...)
     res = max(
-        norm(V - s.Σ.V),
-        maximum(norm.(s.Σ.R - R)),
-        maximum(norm.(s.Σ.K - K))
+        maximum(norm.(s.G.R - R)),
+        maximum(norm.(s.G.K - K))
     )
-    s.Σ.V .= (1.0 - η) * s.Σ.V + η * V
-    s.Σ.R .= (1.0 - η) * s.Σ.R + η * R
-    s.Σ.K .= (1.0 - η) * s.Σ.K + η * K
+    s.G.R .= (1.0 - η) * s.G.R + η * R
+    s.G.K .= (1.0 - η) * s.G.K + η * K
 
-    tr_ρ = tr(density_matrix(s))
-    s.Σ.K .+= s.Σ.R * 4.0 * (tr_ρ - 1.0) / size(s.Σ.V)[1]
-    #s.Σ.V -= I * (1.0 - tr_ρ) / (dtr_ρ_dμ)
+    normalize!(s.G)
     return res
 end
 
@@ -99,20 +78,20 @@ function update_nodes!(s :: SCBorn, n_split :: Int; quadgk_kwargs...)
     ωs = reduce(
         vcat,
         collect(LinRange(a, b, n_split + 2)[2 : end - 1])
-        for (a, b) in zip(@view(s.Σ.ωs[1 : end - 1]), @view(s.Σ.ωs[2 : end]))
+        for (a, b) in zip(@view(s.G.ωs[1 : end - 1]), @view(s.G.ωs[2 : end]))
     )
-    _, R, K = selfconsistensy(s, ωs; quadgk_kwargs...)
-    R′ = map(x -> (-0.5im * (x - x')), retarded(s.Σ, ω) for ω in ωs)
-    K′ = [-im * keldysh(s.Σ, ω) for ω in ωs]
+    R, K = selfconsistensy(s, ωs; quadgk_kwargs...)
+    R′ = map(x -> (-0.5im * (x - x')), retarded(s.G, ω) for ω in ωs)
+    K′ = [-im * keldysh(s.G, ω) for ω in ωs]
     err_R = norm.(R - R′)
     err_K = norm.(K - K′)
     j_R = argmax(err_R)
     j_K = argmax(err_K)
     if err_R[j_R] > err_K[j_K]
-        add_point!(s.Σ, ωs[j_R])
+        add_point!(s.G, ωs[j_R])
         return ωs[j_R], err_R[j_R]
     else
-        add_point!(s.Σ, ωs[j_K])
+        add_point!(s.G, ωs[j_K])
         return ωs[j_K], err_K[j_K]
     end
 end

@@ -14,15 +14,15 @@ let
     DR(ω) = (isfinite(ω) ? (0.2 * ω / (ω + 10.0im)) : (0.2 + 0.0im)) * ones(1, 1)
     bath = BosonicBath([(q + q') / sqrt(2.0)], DR, 0.3)
 
-    Σ = SelfEnergy(
+    G = GreensFunction(
         vcat(
-            LinRange(-40, -1, 4),
-            LinRange(-1, 4, 10)[2 : end - 1],
-            LinRange(4, 40, 4)
+            LinRange(-10, -1, 4),
+            LinRange(-1, 4, 18)[2 : end - 1],
+            LinRange(4, 10, 4)
         ),
-        n_fock, 0.5
+        n_fock
     )
-    oqs = SCBorn(H, Σ, [bath])
+    oqs = SCBorn(H, G, [bath])
 
     for i_point in 1 : 10
         for i_iter in ProgressBar(1 : 20)
