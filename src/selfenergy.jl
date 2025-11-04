@@ -19,6 +19,18 @@ mutable struct SelfEnergy{T <: Real, S}
     end
 end
 
+"""
+    SelfEnergy(ωs, n :: Int, ν :: Real)
+
+Initialize a frequency independent self-energy for `n`-dimensional system. Retarded component 𝚺ᴿ is given by `-im * ν * I` where I is `n`×`n` identity matrix.
+"""
+SelfEnergy(ωs, n :: Int, ν :: Real) = SelfEnergy(
+    ωs,
+    [Matrix(-ComplexF64(ν) * I, n, n) for _ in ωs],
+    [Matrix(ComplexF64(2 * ν * (2 - n) / n) * I, n, n) for _ in ωs],
+    zeros(ComplexF64, n, n)
+)
+
 function add_point!(Σ :: SelfEnergy, ω :: Real)
     push!(Σ.ωs, ω)
     j = length(Σ.ωs)

@@ -11,14 +11,20 @@ green_keldysh(s :: SCBorn, ω) = green_retarded(s, ω) * keldysh(s.Σ, ω) * gre
 green_keldysh(s :: SCBorn, ω :: Real) = let r = green_retarded(s, ω), k = keldysh(s.Σ, ω)
     r * k * (r')
 end
+green_lesser(s :: SCBorn, ω :: Real) = let r = green_retarded(s, ω), k = keldysh(s.Σ, ω)
+    (r * k * (r') + (r' - r)) / 2.0
+end
+green_keldysh_dμ(s :: SCBorn, ω :: Real) = let r = green_retarded(s, ω), k = keldysh(s.Σ, ω)
+    -r * (r * k + k * r') * r'
+end
 
 function selfconsistensy(s :: SCBorn{<: Any, SelfEnergy{T, S}, <: Any}, ωs; quadgk_kwargs...) where {T, S}
     Σ_R = S[]
     Σ_K = S[]
     
     GR = let s = s; ω -> green_retarded(s, ω) end
-    #GK = let s = s; ω -> green_keldysh(s, ω) end
-    for ω in [ωs; Inf]
+    GK = let s = s; ω -> green_keldysh(s, ω) end
+    for ω in ωs
         tmp_R = zero(s.Σ.V)
         tmp_K = zero(s.Σ.V)
         for bath in s.baths
@@ -33,17 +39,41 @@ function selfconsistensy(s :: SCBorn{<: Any, SelfEnergy{T, S}, <: Any}, ωs; qua
             tmp_R += im * sum(
                 quadgk(R, a, b; quadgk_kwargs...)[1] for (a, b) in zip([-Inf; s.Σ.ωs], [s.Σ.ωs; Inf])
             ) / (2π)
-            if isfinite(ω)
-                tmp_K += im * sum(
-                    quadgk(K, a, b; quadgk_kwargs...)[1] for (a, b) in zip([-Inf; s.Σ.ωs], [s.Σ.ωs; Inf])
-                ) / (2π)
-            end
+            tmp_K += im * sum(
+                quadgk(K, a, b; quadgk_kwargs...)[1] for (a, b) in zip([-Inf; s.Σ.ωs], [s.Σ.ωs; Inf])
+            ) / (2π)
         end
         push!(Σ_R, tmp_R)
         push!(Σ_K, tmp_K)
     end
-    return Σ_R[end], map(x -> (-0.5im * (x - x')), Σ_R[1 : end - 1]), map(x -> (-0.5im * (x - x')), Σ_K[1 : end - 1])
+    GK_int = im * sum(
+        quadgk(GK, a, b; quadgk_kwargs...)[1] for (a, b) in zip([-Inf; s.Σ.ωs], [s.Σ.ωs; Inf])
+    ) / (2π)
+    return (
+        sum(retarded(bath, Inf, GK_int) * 0.5 for bath in s.baths),
+        map(x -> (-0.5im * (x - x')), Σ_R),
+        map(x -> (-0.5im * (x - x')), Σ_K)
+    )
 end
+
+density_matrix(s :: SCBorn; quadgk_kwargs...) = -im * sum(
+    quadgk(
+        let s = s;
+            ω -> green_lesser(s, ω)
+        end,
+        a, b; quadgk_kwargs...
+    )[1] for (a, b) in zip([-Inf; s.Σ.ωs], [s.Σ.ωs; Inf])
+) / (2π)
+
+density_matrix_dμ(s :: SCBorn; quadgk_kwargs...) = -im * sum(
+    quadgk(
+        let s = s;
+            ω -> green_keldysh_dμ(s, ω)
+        end,
+        a, b; quadgk_kwargs...
+    )[1] for (a, b) in zip([-Inf; s.Σ.ωs], [s.Σ.ωs; Inf])
+) / (4π)
+
 
 function simple_iteration!(s :: SCBorn, η :: Real = 0.5; quadgk_kwargs...)
     if !(0.0 < η <= 1.0)
@@ -58,6 +88,10 @@ function simple_iteration!(s :: SCBorn, η :: Real = 0.5; quadgk_kwargs...)
     s.Σ.V .= (1.0 - η) * s.Σ.V + η * V
     s.Σ.R .= (1.0 - η) * s.Σ.R + η * R
     s.Σ.K .= (1.0 - η) * s.Σ.K + η * K
+
+    tr_ρ = tr(density_matrix(s))
+    s.Σ.K .+= s.Σ.R * 4.0 * (tr_ρ - 1.0) / size(s.Σ.V)[1]
+    #s.Σ.V -= I * (1.0 - tr_ρ) / (dtr_ρ_dμ)
     return res
 end
 
