@@ -1,32 +1,69 @@
-struct BosonicBath{T, F, G}
-    qs :: Vector{T}
+struct BosonicBath{T <: Number, F <: PoleInterpolation, G <: PoleInterpolation}
+    cpl :: ElasticArray{T, 3, 2, Vector{T}}
     R :: F
     K :: G
 end
 
-retarded(b :: BosonicBath, ω) = b.R(ω)
-advanced(b :: BosonicBath, ω) = (b.R(ω'))'
-advanced(b :: BosonicBath, ω :: Real) = (b.R(ω))'
-spectral_dos(b :: BosonicBath, ω) = (retarded(b, ω) - advanced(b, ω)) / 2.0
-spectral_dos(b :: BosonicBath, ω) = let r = retarded(b, ω); (r - r') end
-keldysh(b :: BosonicBath, ω) = b.K(ω)
-keldysh(b :: BosonicBath{<: Any, <: Any, <: Real}, ω) = (retarded(b, ω) - advanced(b, ω)) * coth(ω / (2.0 * b.K)) * 0.5
-keldysh(b :: BosonicBath{<: Any, <: Any, <: Real}, ω :: Real) = iszero(ω) ? (
-    (derivative(b.R, 0.0) |> (x -> (x - x') * 0.5)) * 2.0 * b.K
-) : (
-    let r = retarded(b, ω), x = coth(ω / (2.0 * b.K))
-        (r - r') * x * 0.5
+function retarded_to_keldysh(R :: PoleInterpolation{3}, T :: Real, Ω_cutoff :: Real; ε :: Real = 1e-15)
+    # construct advanced R - A
+    residues = ElasticArray{promote_type(eltype(R.residues), ComplexF64)}(undef, size(R.residues, 1), size(R.residues, 2), size(R.residues, 3) * 2)
+    slice(residues, 1 : size(R.residues, 3)) .= R.residues
+    for i in axes(R.residues, 3)
+        adjoint!(slice(residues, i + lastdim(R.residues)), slice(R.residues, i))
+        lmul!(-one(eltype(residues)), slice(residues, i + lastdim(R.residues)))
     end
-)
+    K = PoleInterpolation(
+        [R.poles; conj(R.poles)],
+        residues,
+        R.cnst - R.cnst'
+    )
 
-couplings(b :: BosonicBath) = b.qs
-coupling(b :: BosonicBath, i) = b.qs[i]
+    # TODO pass parameters for AAA call
+    bose = aaa_mat_odd(
+        0.125 * T, Ω_cutoff,
+        let T = T; x -> (coth(x / (2.0 * T)) - 2.0 * T / x) end;
+        n_iter = 100, split = 20, ε = 1e-9
+    ) |> PoleInterpolation
+    cotanh(x) = bose(x) + 2.0 * T / x
 
-for component in (:retarded, :advanced, :keldysh, :spectral_dos)
-    @eval $(component)(b :: BosonicBath, ω, g) = let D = $(component)(b, ω), qs = b.qs
-        sum(
-            q * g * q′ * D[i, j]
-            for (i, q) in enumerate(qs), (j, q′) in enumerate(qs)
+    # multiply (R - A) by cotangent
+    residues′ = Array{promote_type(eltype(residues), eltype(bose.poles), eltype(bose.residues), ComplexF64)}(
+        undef, size(residues, 1), size(residues, 2), length(bose.poles)
+    )
+    @inbounds for i in eachindex(bose.poles)
+        evaluate!(slice(residues′, i), K, bose.poles[i])
+        lmul!(bose.residues[i], slice(residues′, i))
+    end
+    @inbounds for i in eachindex(K.poles)
+        lmul!(cotanh(K.poles[i]), slice(K.residues, i))
+    end
+    K.cnst .*= bose.cnst
+    append!(residues, residues′)
+    append!(K.poles, bose.poles)
+
+    # crop poles with advanced causality
+    return retardize!(K)
+end
+
+function BosonicBath(cpl, J :: Function, T :: Real, Ω_cutoff :: Real)
+    sz = size(first(cpl))
+    S = eltype(first(cpl))
+    R = let tmp = aaa_mat_odd(0.125 * T, Ω_cutoff, J)
+        PoleInterpolation(
+            OddBarycentricInterpolation(
+                tmp.nodes,
+                tmp.weights,
+                -im * tmp.values
+            )
         )
     end
+    retardize!(R)
+    K = retarded_to_keldysh(R, T, Ω_cutoff)
+    return BosonicBath(
+        reduce(
+            append!, cpl;
+            init = ElasticArray{S}(undef, sz..., 0)
+        ),
+        R, K
+    )
 end

@@ -1,21 +1,16 @@
-abstract type RationalInterpolation <: Function end
-
-mutable struct BarycentricInterpolation{X <: Number, W <: Number, T, M, A <: AbstractArray{T, M}} <: RationalInterpolation
+mutable struct BarycentricInterpolation{M, V, A <: ElasticArray{V, M}, X <: Number, W <: Number} <: RationalInterpolation
     nodes :: Vector{X}
     weights :: Vector{W}
     values :: A
     perm :: Vector{Int}
 
     function BarycentricInterpolation(nodes, weights, values)
-        if length(nodes) != length(weights)
+        if length(nodes) != length(weights) || size(values)[end] != length(nodes)
             throw(DimensionMismatch("Arguments `nodes` and `weights` must have the same lengths"))
         end
-        if length(nodes) > length(values)
-            throw(DimensionMismatch("Array `values` must not be shorter then `nodes`"))
-        end
-        perm = collect(1 : length(weights))
+        perm = collect(eachindex(weights))
         sortperm!(perm, abs.(weights))
-        new{eltype(nodes), eltype(weights), eltype(values), ndims(values), typeof(values)}(
+        new{ndims(values), eltype(values), typeof(values), eltype(nodes), eltype(weights)}(
             nodes isa Vector ? nodes : vec(collect(nodes)),
             weights isa Vector ? weights : vec(collect(weights)),
             values,
@@ -24,53 +19,55 @@ mutable struct BarycentricInterpolation{X <: Number, W <: Number, T, M, A <: Abs
     end
 end
 
+Base.ndims(:: BarycentricInterpolation{M}) where {M} = M
+Base.ndims(:: Type{<: BarycentricInterpolation{M}}) where {M} = M
+
 function BarycentricInterpolation(nodes, weights, values :: AbstractVector{<: Array{T, N}}) where {T, N}
     if isempty(values)
         throw(ArgumentError("values must not be empty"))
     end
-    sz = size(first(values))
-    vals = Array{T, N + 1}(undef, (size(first(values))..., length(values)))
-    
-    for (i, val) in enumerate(values)
-        if size(val) != sz
-            throw(DimensionMismatch("All the values should have the same dimensions"))
-        end
-        selectdim(vals, N + 1, i) .= val
-    end
+    vals = reduce(
+        append!,
+        values;
+        init = ElasticArray{T, N + 1}(undef, size(first(values))..., 0)
+    )
     return BarycentricInterpolation(nodes, weights, vals)
 end
 
-evaluate!(_, :: BarycentricInterpolation{X, W, T, 1, A}, __) where {X, W, T, A} = error("Not applicable")
-function evaluate!(y, F :: BarycentricInterpolation{X, W, T, M, A}, x) where {X, W, T, M, A}
+evaluate!(_, :: BarycentricInterpolation{1}, __) = error("Not applicable")
+
+function evaluate!(y, F :: BarycentricInterpolation, x)
     if size(y) != size(F.values)[begin : end - 1]
         throw(DimensionMismatch("Output array dimension mismatch: expected $(size(F.values)[begin : end - 1]), got $(size(y))"))
     end
-    j = findfirst(let x = x; z -> z == x end, F.nodes)
+    j = findfirst(let x = x; z -> isapprox(z, x) end, F.nodes)
     sz = size(y)
-    len = prod(sz)
     if j isa Nothing
         fill!(y, zero(eltype(y)))
-        # Float64 because of division
-        den = zero(promote_type(X, W, typeof(x), Float64))
+        den = zero(divtype(eltype(F.weights), promote_type(typeof(x), eltype(F.nodes))))
         tmp = zero(den)
         @inbounds for i in F.perm
             tmp = F.weights[i] / (x - F.nodes[i])
             den += tmp
-            axpy!(tmp, selectdim(F.values, M, i), y)
+            axpy!(tmp, slice(F.values, i), y)
         end
         return (y ./= den)
     else
-        y .= selectdim(F.values, M, j)
+        y .= slice(F.values, j)
         return y
     end
 end
 
-function (F :: BarycentricInterpolation{X, W, T, 1, A})(x) where {X, W, T, A}
-    j = findfirst(let x = x; y -> y == x end, F.nodes)
+function (F :: BarycentricInterpolation{1})(x)
+    j = findfirst(let x = x; y -> isapprox(x, y) end, F.nodes)
     if j isa Nothing
-        # Float64 because of division
-        num = zero(promote_type(X, W, T, typeof(x), Float64))
-        den = zero(promote_type(X, W, typeof(x), Float64))
+        num = zero(
+            divtype(
+                promote_type(eltype(F.weights), eltype(F.values)),
+                promote_type(typeof(x), eltype(F.nodes))
+            )
+        )
+        den = zero(divtype(eltype(F.weights), promote_type(typeof(x), eltype(F.nodes))))
         tmp = zero(den)
         @inbounds @simd for i in F.perm
             tmp = F.weights[i] / (x - F.nodes[i])
@@ -83,24 +80,73 @@ function (F :: BarycentricInterpolation{X, W, T, 1, A})(x) where {X, W, T, A}
     end
 end
 
-function (F :: BarycentricInterpolation{X, W, T, N, A})(x) where {X, W, T, N, A}
+function (F :: BarycentricInterpolation)(x)
     sz = size(F.values)[begin : end - 1]
-    # Float64 because of division
-    y = Array{promote_type(X, W, T, typeof(x), Float64)}(undef, sz)
+    T = divtype(
+        divtype(promote_type(eltype(F.values), eltype(F.weights)), promote_type(eltype(F.nodes), typeof(x))),
+        divtype(eltype(F.weights), promote_type(eltype(F.nodes), typeof(x)))
+    )
+    y = Array{T}(undef, sz)
     evaluate!(y, F, x)
 end
 
 function add_node!(F, node, weight, value)
+    if any(isapprox.(node, F.nodes))
+        throw(ArgumentError("Node $(node) already exists"))
+    end
     push!(F.nodes, node)
     push!(F.weights, weight)
-    if length(F.nodes) > size(F.values, ndims(F.values))
-        sz = size(F.values)
-        tmp = vec(F.values)
-        resize!(tmp, 2 * length(tmp) + prod(sz[begin : end - 1]))
-        F.values = reshape(tmp, (sz[begin : end - 1]..., 2 * sz[end] + 1))
-    end
-    selectdim(F.values, ndims(F.values), length(F.nodes)) .= value
+    append!(F.values, value)
+    push!(perm, lastindex(F.weights))
+    sortperm!(perm, abs.(weights))
     return F
 end
 
 add_node!(F, node, value) = add_node!(F, node, zero(eltype(F.weights)), value)
+
+mutable struct OddBarycentricInterpolation{M, V, A <: ElasticArray{V, M}, X <: Real, W <: Number} <: RationalInterpolation
+    nodes :: Vector{X}
+    weights :: Vector{W}
+    values :: A
+    perm :: Vector{Int}
+
+    function OddBarycentricInterpolation(nodes, weights, values)
+        if length(nodes) != length(weights) || size(values)[end] != length(nodes)
+            throw(DimensionMismatch("Arguments `nodes` and `weights` must have the same lengths"))
+        end
+        if any(nodes .<= 0.0)
+            throw(ArgumentError("All the nodes must be positive"))
+        end
+        perm = collect(eachindex(weights))
+        sortperm!(perm, abs.(weights))
+        values′ = values isa ElasticArray ? values : ElasticArray(values)
+        new{ndims(values), eltype(values), typeof(values′), eltype(nodes), eltype(weights)}(
+            nodes isa Vector ? nodes : vec(collect(nodes)),
+            weights isa Vector ? weights : vec(collect(weights)),
+            values′,
+            perm
+        )
+    end
+end
+
+function OddBarycentricInterpolation(nodes, weights, values :: AbstractVector{<: Array{T, N}}) where {T, N}
+    if isempty(values)
+        throw(ArgumentError("values must not be empty"))
+    end
+    vals = reduce(
+        append!, values;
+        init = ElasticArray{T}(undef, size(first(values))..., 0)
+    )
+    return OddBarycentricInterpolation(nodes, weights, vals)
+end
+
+
+# TODO implement a better version
+(F :: OddBarycentricInterpolation)(x) = sum(
+    slice(F.values, i) * F.weights[i] * F.nodes[i] / (x ^ 2 - F.nodes[i] ^ 2) for i in F.perm
+) / sum(F.weights[i] * x / (x ^ 2 - F.nodes[i] ^ 2) for i in F.perm)
+
+(F :: OddBarycentricInterpolation{1})(x) = sum(
+    F.values[i] * F.weights[i] * F.nodes[i] / (x ^ 2 - F.nodes[i] ^ 2) for i in F.perm
+) / sum(F.weights[i] * x / (x ^ 2 - F.nodes[i] ^ 2) for i in F.perm)
+
