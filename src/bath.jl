@@ -67,3 +67,5 @@ function BosonicBath(cpl, J :: Function, T :: Real, Ω_cutoff :: Real)
         R, K
     )
 end
+
+couplings(b :: BosonicBath) = (slice(b.cpl, i) for i in axes(b.cpl, 3))

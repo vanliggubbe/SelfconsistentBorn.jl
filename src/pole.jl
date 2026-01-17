@@ -34,7 +34,7 @@ evaluate!(_, F :: PoleInterpolation{1}, __) = error("Not applicable")
 
 function evaluate!(y, F :: PoleInterpolation, x)
     y .= F.cnst
-    @inbounds for i in eachindex(F.poles, F.residues)
+    @inbounds for i in eachindex(F.poles)
         axpy!(inv(x - F.poles[i]), slice(F.residues, i), y)
     end
     return y

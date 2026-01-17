@@ -1,97 +1,165 @@
-struct SCBorn{T, S <: GreensFunction, B <: BosonicBath}
+struct OQSystem{T <: AbstractMatrix, B}
+    dim :: Int
     H :: T
-    G :: S
-    baths :: Vector{B}
-end
+    baths :: B
 
-green_retarded(s :: SCBorn, ω) = retarded(s.G, ω)
-green_advanced(s :: SCBorn, ω) = advanced(s.G, ω)
-green_keldysh(s :: SCBorn, ω) = keldysh(s.G, ω)
-green_lesser(s :: SCBorn, ω :: Real) = let r = green_retarded(s, ω), k = green_keldysh(s, ω)
-    (r - r' - k) / 2.0
-end
-
-function selfconsistensy(s :: SCBorn{<: Any, GreensFunction{T, S}, <: Any}, ωs; quadgk_kwargs...) where {T, S}
-    G_R = S[]
-    G_K = S[]
-    
-    for ω in ωs
-        Σ_R = nothing
-        Σ_K = nothing
-        for bath in s.baths
-            R(ω′) = let r = green_retarded(s, ω′), k = green_keldysh(s, ω′) 
-                0.5 * retarded(bath, ω - ω′, k) + keldysh(bath, ω - ω′, r)
-            end
-            K(ω′) = let r = green_retarded(s, ω′), k = green_keldysh(s, ω′) 
-                0.5 * spectral_dos(bath, ω - ω′, r - r') +
-                keldysh(bath, ω - ω′, k)
-            end
-            if Σ_R isa Nothing
-                Σ_R = im * sum(
-                    quadgk(R, a, b; quadgk_kwargs...)[1] for (a, b) in zip([-Inf; s.G.ωs], [s.G.ωs; Inf])
-                ) / (2π)
-                Σ_K = im * sum(
-                    quadgk(K, a, b; quadgk_kwargs...)[1] for (a, b) in zip([-Inf; s.G.ωs], [s.G.ωs; Inf])
-                ) / (2π)
-            else
-                Σ_R .+= im * sum(
-                    quadgk(R, a, b; quadgk_kwargs...)[1] for (a, b) in zip([-Inf; s.G.ωs], [s.G.ωs; Inf])
-                ) / (2π)
-                Σ_K .+= im * sum(
-                    quadgk(K, a, b; quadgk_kwargs...)[1] for (a, b) in zip([-Inf; s.G.ωs], [s.G.ωs; Inf])
-                ) / (2π)
-            end
-            
+    function OQSystem(H, baths)
+        if size(H, 1) != size(H, 2)
+            throw(DimensionMismatch("Hamiltonian must be square matrix"))
         end
-        #display(Σ_R)
-        #display(Σ_K)
-        push!(G_R, inv(ω * I - s.H - Σ_R))
-        push!(G_K, G_R[end] * Σ_K * G_R[end]')
+        dim = size(H, 1)
+        for b in baths
+            if !(b isa BosonicBath)
+                throw(ArgumentError("Each element of `bath` must have a type of bosonic bath"))
+            end
+        end
+        new{typeof(H), typeof(baths)}(dim, H, baths)
     end
-    #display(G_R[1])
-    #display(G_K[1])
-    return (
-        map(x -> (-0.5im * (x - x')), G_R),
-        map(x -> (-0.5im * (x - x')), G_K)
-    )
 end
 
-density_matrix(s :: SCBorn) = im * (int_RA(s.G) - int_K(s.G)) / (4π)
-
-function simple_iteration!(s :: SCBorn, η :: Real = 0.5; quadgk_kwargs...)
-    if !(0.0 < η <= 1.0)
-        throw(ArgumentError("Coefficient in simple iteration must be in (0, 1]"))
-    end
-    R, K = selfconsistensy(s, s.G.ωs[2 : end - 1]; quadgk_kwargs...)
-    res = max(
-        maximum(norm.(s.G.R - R)),
-        maximum(norm.(s.G.K - K))
-    )
-    s.G.R .= (1.0 - η) * s.G.R + η * R
-    s.G.K .= (1.0 - η) * s.G.K + η * K
-
-    normalize!(s.G)
-    return res
+# TODO smarter than this
+function green_0(oqs :: OQSystem)
+    L = Matrix(Commutator(oqs.H, -1))
+    Λ, Ψ = eigen(L)
+    return PoleInterpolation(Λ, [Ψ[:, i] * Ψ[:, i]' for i in 1 : size(Ψ, 2)])
 end
 
-function update_nodes!(s :: SCBorn, n_split :: Int; quadgk_kwargs...)
-    ωs = reduce(
+function green_selfconsistency(oqs :: OQSystem, G, ω)
+    T = promote_type(Complex, eltype(oqs.H))
+    ginv = zeros(T, oqs.dim ^ 2, oqs.dim ^ 2)
+    gtmp = Matrix{T}(undef, oqs.dim ^ 2, oqs.dim ^ 2)
+    tmp2 = Matrix{T}(undef, oqs.dim ^ 2, oqs.dim ^ 2)
+    for b in oqs.baths
+        qc = [Commutator(q, 1) for q in couplings(b)]
+        qq = [Commutator(q, -1) for q in couplings(b)]
+        @inbounds for (i, p) in enumerate(b.K.poles)
+            local rR
+            if i <= length(b.R.poles)
+                rR = slice(b.R.residues, i)
+            end
+            rK = slice(b.K.residues, i)
+            evaluate!(gtmp, G, ω - p)
+            @inbounds for j in eachindex(qq)
+                @time mul!(tmp2, qq[j]', gtmp)
+                @inbounds for k in eachindex(qq, qc)
+                    if i <= length(b.R.poles)
+                        mul!(ginv, tmp2, qc[k], rR[j, k], one(eltype(ginv)))
+                    end
+                    mul!(ginv, tmp2, qq[k], rK[j, k], one(eltype(ginv)))
+                end
+            end
+        end
+    end
+    ginv .+= Matrix(Commutator(oqs.H, -1))
+    lmul!(-one(eltype(ginv)), ginv)
+    axpy!(ω, I(oqs.dim ^ 2), ginv)
+    return inv(ginv)
+end
+
+function simple_iteration(
+    oqs :: OQSystem,
+    X,
+    Ω_cutoff :: Real,
+    which = :green;
+    aaa_iter :: Int = 20,
+    aaa_eps :: Real = 1e-9,
+    aaa_split :: Function = (n -> max(3, 20 - n)),
+    nrm :: Function = norm
+)
+    F = (which == :green) ? (
+        let oqs = oqs, G = X; ω -> green_selfconsistency(oqs, G, ω) end
+    ) : (
+        which == :selfenergy ? nothing : nothing
+    )
+
+    ωs = [-Ω_cutoff, Ω_cutoff]
+    fs = reduce(
+        append!, F.(ωs);
+        init = ElasticArray{ComplexF64}(undef, oqs.dim ^ 2, oqs.dim ^ 2, 0)
+    )
+    ws = [(-1.0 + 0.0im) ^ i for i in 1 : length(ωs)]
+    F_int = BarycentricInterpolation(ωs, ws, fs)
+    @assert F_int.nodes === ωs
+    @assert F_int.weights === ws
+    @assert F_int.values === fs
+
+    νs = reduce(
         vcat,
-        collect(LinRange(a, b, n_split + 2)[2 : end - 1])
-        for (a, b) in zip(@view(s.G.ωs[1 : end - 1]), @view(s.G.ωs[2 : end]))
+        collect(LinRange(a, b, aaa_split(0) + 2))[2 : end - 1]
+        for (a, b) in zip(@view(ωs[1 : end - 1]), @view(ωs[2 : end]))
     )
-    R, K = selfconsistensy(s, ωs; quadgk_kwargs...)
-    R′ = map(x -> (-0.5im * (x - x')), retarded(s.G, ω) for ω in ωs)
-    K′ = [-im * keldysh(s.G, ω) for ω in ωs]
-    err_R = norm.(R - R′)
-    err_K = norm.(K - K′)
-    j_R = argmax(err_R)
-    j_K = argmax(err_K)
-    if err_R[j_R] > err_K[j_K]
-        add_point!(s.G, ωs[j_R])
-        return ωs[j_R], err_R[j_R]
-    else
-        add_point!(s.G, ωs[j_K])
-        return ωs[j_K], err_K[j_K]
+    gs = reduce(
+        append!, F.(νs);
+        init = ElasticArray{ComplexF64}(undef, oqs.dim ^ 2, oqs.dim ^ 2, 0)
+    )
+    for it in 1 : aaa_iter
+        er, j = findmax(i -> nrm(F_int(νs[i]) - slice(gs, i)), eachindex(νs))
+        if er < aaa_eps
+            break
+        end
+        println(νs[j], " ", er)
+
+        # add a new support point
+        new_ω = νs[j]
+        push!(ωs, new_ω)
+        append!(fs, slice(gs, j))
+
+        # delete points
+        left = maximum(ωs[ωs .< new_ω])
+        right = minimum(ωs[ωs .> new_ω])
+        n_left = sum(left .< νs .< new_ω)
+        n_right = sum(new_ω .< νs .< right)
+        to_delete = reverse(collect(1 : length(νs))[left .< νs .< right])
+        cur = length(νs)
+        for x in to_delete
+            if x != cur
+                slice(gs, x) .= slice(gs, cur)
+                νs[x] = νs[cur]
+            end
+            cur -= 1
+        end
+        resize!(νs, cur)
+        resize!(gs, firstdims(gs)..., cur)
+
+        # add new points
+        new_νs = [
+            collect(LinRange(left, new_ω, max(n_left, aaa_split(it)) + 2))[2 : end - 1];
+            collect(LinRange(new_ω, right, max(n_right, aaa_split(it)) + 2))[2 : end - 1]
+        ]
+        append!(νs, new_νs)
+        for ν in new_νs
+            append!(gs, F(ν))
+        end
+
+        # do tall and skinny SVD
+        n = length(ωs)
+        R = zeros(ComplexF64, 2 * n, n)
+        tmp = Matrix{ComplexF64}(undef, oqs.dim ^ 4, n)
+        wspace = QRWYWs(tmp) # LAPACK workspace for multiple QRs
+        @inbounds for i in eachindex(νs)
+            tmp2 = vec(slice(gs, i))
+            # make a block out of 
+            @inbounds for j in eachindex(ωs)
+                tmp[:, j] .= tmp2
+                axpy!(-one(ComplexF64), vec(slice(fs, j)), view(tmp, :, j))
+                ldiv!(νs[i] - ωs[j], view(tmp, :, j))
+            end
+            q = QRCompactWY(LAPACK.geqrt!(wspace, tmp)...)
+            if i == 1
+                R[1 : n, :] .= q.R
+            else
+                R[1 + n : end, :] .= q.R
+                LAPACK.geqrt!(wspace, R)
+                for j in 1 : n - 1
+                    fill!(@view(R[j + 1 : n, j]), zero(eltype(R)))
+                end
+            end
+        end
+        _, __, V = svd!(@view R[1 : n, :])
+        ws .= V[1 : end - 1, end]
+        push!(ws, V[end])
+        push!(F_int.perm, length(ws))
+        sortperm!(F_int.perm, abs.(ws))
     end
+    return F_int
 end
