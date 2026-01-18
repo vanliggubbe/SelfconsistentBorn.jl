@@ -12,6 +12,9 @@ struct OQSystem{T <: AbstractMatrix, B}
             if !(b isa BosonicBath)
                 throw(ArgumentError("Each element of `bath` must have a type of bosonic bath"))
             end
+            if firstdims(b.cpl) != (dim, dim)
+                throw(DimensionMismatch("Dimensions of the Hamiltonian and the coupling operators must coincide"))
+            end
         end
         new{typeof(H), typeof(baths)}(dim, H, baths)
     end
@@ -38,18 +41,18 @@ function green_selfconsistency(oqs :: OQSystem, G, ω)
             rK = slice(b.K.residues, i)
             evaluate!(gtmp, G, ω - p)
             @inbounds for (j, left) in enumerate(b.cpl_q)
-                @time mul!(tmp2, left', gtmp)
-                @time @inbounds for (k, (right, right′)) in enumerate(zip(b.cpl_c, b.cpl_q))
+                mul!(tmp2, left', gtmp)
+                @inbounds for (k, (right, right′)) in enumerate(zip(b.cpl_c, b.cpl_q))
                     if i <= length(b.R.poles)
-                        mul!(ginv, tmp2, right, rR[j, k], one(eltype(ginv)))
+                        mul!(ginv, tmp2, right, rR[j, k], one(T))
                     end
-                    mul!(ginv, tmp2, right′, rK[j, k], one(eltype(ginv)))
+                    mul!(ginv, tmp2, right′, rK[j, k], one(T))
                 end
             end
         end
     end
     ginv .+= Matrix(Commutator(oqs.H, -1))
-    lmul!(-one(eltype(ginv)), ginv)
+    lmul!(-one(T), ginv)
     axpy!(ω, I(oqs.dim ^ 2), ginv)
     return inv(ginv)
 end
@@ -95,7 +98,7 @@ function simple_iteration(
         if er < aaa_eps
             break
         end
-        println(νs[j], " ", er)
+        @info "Iteration $(it): added node point $(νs[j]), error $(er)"
 
         # add a new support point
         new_ω = νs[j]
@@ -133,23 +136,23 @@ function simple_iteration(
         n = length(ωs)
         R = zeros(ComplexF64, 2 * n, n)
         tmp = Matrix{ComplexF64}(undef, oqs.dim ^ 4, n)
+        height = min(n, oqs.dim ^ 4)
         wspace = QRWYWs(tmp) # LAPACK workspace for multiple QRs
         @inbounds for i in eachindex(νs)
             tmp2 = vec(slice(gs, i))
-            # make a block out of 
+            mul!(tmp, -one(eltype(fs)), reshape(fs, oqs.dim ^ 4, n))
             @inbounds for j in eachindex(ωs)
-                tmp[:, j] .= tmp2
-                axpy!(-one(ComplexF64), vec(slice(fs, j)), view(tmp, :, j))
-                ldiv!(νs[i] - ωs[j], view(tmp, :, j))
+                slice(tmp, j) .+= tmp2
+                ldiv!(νs[i] - ωs[j], slice(tmp, j))
             end
             q = QRCompactWY(LAPACK.geqrt!(wspace, tmp)...)
             if i == 1
-                R[1 : n, :] .= q.R
+                R[1 : height, :] .= q.R
             else
-                R[1 + n : end, :] .= q.R
+                R[n .+ (1 : height), :] .= q.R
                 LAPACK.geqrt!(wspace, R)
-                for j in 1 : n - 1
-                    fill!(@view(R[j + 1 : n, j]), zero(eltype(R)))
+                for j in 1 : n
+                    fill!(@view(R[j + 1 : end, j]), zero(eltype(R)))
                 end
             end
         end

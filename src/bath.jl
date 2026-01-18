@@ -7,6 +7,9 @@ struct BosonicBath{T <: Number, F <: PoleInterpolation, G <: PoleInterpolation, 
     cpl_q :: Vector{S}
 
     function BosonicBath(cpl, R, K)
+        if (lastdim(cpl), lastdim(cpl)) != firstdims(R.residues) || (lastdim(cpl), lastdim(cpl)) != firstdims(K.residues)
+            throw(DimensionMismatch("Number of coupling operators must coincide with the bath spectral density dimension"))
+        end
         class = [Commutator(slice(cpl, i), 1) for i in axes(cpl, 3)]
         quant = [Commutator(slice(cpl, i), -1) for i in axes(cpl, 3)]
         new{eltype(cpl), typeof(R), typeof(K), eltype(class)}(cpl, R, K, class, quant)
@@ -54,6 +57,12 @@ function retarded_to_keldysh(R :: PoleInterpolation{3}, T :: Real, Ω_cutoff :: 
     return retardize!(K)
 end
 
+"""
+    BosonicBath(cpl, J, T, Ω_cutoff)
+
+Creates a BosonicBath object from spectral density `J`, temperature `T`, and list of coupling operators `cpl`.
+Function `J` must return a square matrix, it's size must coincide with length of `cpl`.
+"""
 function BosonicBath(cpl, J :: Function, T :: Real, Ω_cutoff :: Real)
     sz = size(first(cpl))
     S = eltype(first(cpl))
