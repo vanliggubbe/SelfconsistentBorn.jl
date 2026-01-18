@@ -29,23 +29,21 @@ function green_selfconsistency(oqs :: OQSystem, G, ω)
     ginv = zeros(T, oqs.dim ^ 2, oqs.dim ^ 2)
     gtmp = Matrix{T}(undef, oqs.dim ^ 2, oqs.dim ^ 2)
     tmp2 = Matrix{T}(undef, oqs.dim ^ 2, oqs.dim ^ 2)
+    local rR, rK
     for b in oqs.baths
-        qc = [Commutator(q, 1) for q in couplings(b)]
-        qq = [Commutator(q, -1) for q in couplings(b)]
         @inbounds for (i, p) in enumerate(b.K.poles)
-            local rR
             if i <= length(b.R.poles)
                 rR = slice(b.R.residues, i)
             end
             rK = slice(b.K.residues, i)
             evaluate!(gtmp, G, ω - p)
-            @inbounds for j in eachindex(qq)
-                @time mul!(tmp2, qq[j]', gtmp)
-                @inbounds for k in eachindex(qq, qc)
+            @inbounds for (j, left) in enumerate(b.cpl_q)
+                @time mul!(tmp2, left', gtmp)
+                @time @inbounds for (k, (right, right′)) in enumerate(zip(b.cpl_c, b.cpl_q))
                     if i <= length(b.R.poles)
-                        mul!(ginv, tmp2, qc[k], rR[j, k], one(eltype(ginv)))
+                        mul!(ginv, tmp2, right, rR[j, k], one(eltype(ginv)))
                     end
-                    mul!(ginv, tmp2, qq[k], rK[j, k], one(eltype(ginv)))
+                    mul!(ginv, tmp2, right′, rK[j, k], one(eltype(ginv)))
                 end
             end
         end

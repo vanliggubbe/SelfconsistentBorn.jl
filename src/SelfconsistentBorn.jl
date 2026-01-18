@@ -2,7 +2,7 @@ module SelfconsistentBorn
 
 import LinearAlgebra: I, norm, tr, axpy!, axpby!, adjoint!, svd!, Diagonal, eigvals, lmul!, mul!, eigen, ldiv!, QRCompactWY
 import ElasticArrays: ElasticArray, ElasticMatrix, ElasticVector
-import LinearMaps: LinearMap, _unsafe_mul!, Adjoint
+import LinearMaps: LinearMap, _unsafe_mul!, Adjoint, MulStyle
 import FastLapackInterface: QRWYWs, LAPACK
 
 export BosonicBath, OQSystem
