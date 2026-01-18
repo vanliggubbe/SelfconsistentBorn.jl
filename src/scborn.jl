@@ -20,6 +20,21 @@ struct OQSystem{T <: AbstractMatrix, B}
     end
 end
 
+struct GreensFunction{F <: RationalInterpolation} <: RationalInterpolation
+    g :: F
+end
+
+function evaluate!(y, F :: GreensFunction, x)
+    evaluate!(y, F.g, x)
+    @assert size(y, 1) == size(y, 2)
+    @inbounds for i in axes(y, 1)
+        y[i, i] += one(eltype(y))
+    end
+    ldiv!(x, y)
+end
+
+(F :: GreensFunction)(x) = (F.g(x) + I) / x
+
 # TODO smarter than this
 function green_0(oqs :: OQSystem)
     L = Matrix(Commutator(oqs.H, -1))
@@ -28,7 +43,7 @@ function green_0(oqs :: OQSystem)
 end
 
 function green_selfconsistency(oqs :: OQSystem, G, ω)
-    T = promote_type(Complex, eltype(oqs.H))
+    T = promote_type(ComplexF64, eltype(oqs.H))
     ginv = zeros(T, oqs.dim ^ 2, oqs.dim ^ 2)
     gtmp = Matrix{T}(undef, oqs.dim ^ 2, oqs.dim ^ 2)
     tmp2 = Matrix{T}(undef, oqs.dim ^ 2, oqs.dim ^ 2)
@@ -68,7 +83,7 @@ function simple_iteration(
     nrm :: Function = norm
 )
     F = (which == :green) ? (
-        let oqs = oqs, G = X; ω -> green_selfconsistency(oqs, G, ω) end
+        let oqs = oqs, G = X; ω -> (green_selfconsistency(oqs, G, ω) * ω - I) end
     ) : (
         which == :selfenergy ? nothing : nothing
     )
@@ -162,5 +177,5 @@ function simple_iteration(
         push!(F_int.perm, length(ws))
         sortperm!(F_int.perm, abs.(ws))
     end
-    return F_int
+    return GreensFunction(F_int)
 end
