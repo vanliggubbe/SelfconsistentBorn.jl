@@ -1,13 +1,15 @@
-struct OQSystem{T <: AbstractMatrix, B}
+struct OQSystem{T <: AbstractMatrix, B, P}
     dim :: Int
     H :: T
     baths :: B
+    perm :: PermutationMap{P}
 
     function OQSystem(H, baths)
         if size(H, 1) != size(H, 2)
             throw(DimensionMismatch("Hamiltonian must be square matrix"))
         end
         dim = size(H, 1)
+        perm = vec(transpose(reshape(1 : dim ^ 2, dim, dim)))
         for b in baths
             if !(b isa BosonicBath)
                 throw(ArgumentError("Each element of `bath` must have a type of bosonic bath"))
@@ -16,7 +18,7 @@ struct OQSystem{T <: AbstractMatrix, B}
                 throw(DimensionMismatch("Dimensions of the Hamiltonian and the coupling operators must coincide"))
             end
         end
-        new{typeof(H), typeof(baths)}(dim, H, baths)
+        new{typeof(H), typeof(baths), typeof(perm)}(dim, H, baths, PermutationMap(perm))
     end
 end
 
@@ -97,13 +99,21 @@ function simple_iteration(
         which == :selfenergy ? nothing : nothing
     )
 
-    ωs = [-Ω_cutoff, Ω_cutoff]
+    # TODO add possibility of a true zero
+    ωs = [1e-6, Ω_cutoff]
     fs = reduce(
         append!, F.(ωs);
         init = ElasticArray{ComplexF64}(undef, oqs.dim ^ 2, oqs.dim ^ 2, 0)
     )
     ws = [(-1.0 + 0.0im) ^ i for i in 1 : length(ωs)]
-    F_int = BarycentricInterpolation(ωs, ws, fs)
+    sym_f = conj ∘ oqs.perm
+    # symmetric weights and values
+    fs′ = similar(fs)
+    ws′ = conj(ws)
+    @inbounds for i in axes(fs′, 3)
+        evaluate!(slice(fs′, i), sym_f, slice(fs, i))
+    end
+    F_int = SymmetricBarycentricInterpolaton(ωs, ws, fs, conj, sym_f)
     @assert F_int.nodes === ωs
     @assert F_int.weights === ws
     @assert F_int.values === fs
@@ -128,6 +138,9 @@ function simple_iteration(
         new_ω = νs[j]
         push!(ωs, new_ω)
         append!(fs, slice(gs, j))
+        # calculate value of symmetric point
+        append!(fs′, similar(slice(fs′, 1)))
+        evaluate!(slice(fs′, size(fs′, 3)), sym_f, slice(fs, size(fs, 3)))
 
         # delete points
         left = maximum(ωs[ωs .< new_ω])
@@ -158,16 +171,33 @@ function simple_iteration(
 
         # do tall and skinny SVD
         n = length(ωs)
-        R = zeros(ComplexF64, 2 * n, n)
-        tmp = Matrix{ComplexF64}(undef, oqs.dim ^ 4, n)
-        height = min(n, oqs.dim ^ 4)
+        R = zeros(Float64, 4 * n, 2 * n)
+        tmp = Matrix{Float64}(undef, 2 * oqs.dim ^ 4, 2 * n)
+        height = min(n, oqs.dim ^ 4) * 2
         wspace = QRWYWs(tmp) # LAPACK workspace for multiple QRs
+
+        local y_ij, z_ij, f_i, f_j, f̄_j
         @inbounds for i in eachindex(νs)
-            tmp2 = vec(slice(gs, i))
-            mul!(tmp, -one(eltype(fs)), reshape(fs, oqs.dim ^ 4, n))
+            f_i = vec(slice(gs, i))
+            # views on real and imaginary parts
+            #mul!(tmp, -one(Float64), reinterpret(Float64, reshape(fs, oqs.dim ^ 4, n)))
             @inbounds for j in eachindex(ωs)
-                slice(tmp, j) .+= tmp2
-                ldiv!(νs[i] - ωs[j], slice(tmp, j))
+                f_j = vec(slice(fs, j))
+                f̄_j = vec(slice(fs′, j))
+                
+                y_ij = inv(νs[i] - ωs[j])
+                z_ij = inv(νs[i] + ωs[j])
+
+                # real values
+                dst = reinterpret(ComplexF64, @view tmp[:, 2 * j - 1])
+                mul!(dst, y_ij, f_j)
+                axpy!(z_ij, f̄_j, dst)
+                axpy!(-y_ij - z_ij, f_i, dst)
+                # imag values
+                dst = reinterpret(ComplexF64, @view tmp[:, 2 * j])
+                mul!(dst, im * y_ij, f_j)
+                axpy!(-im * z_ij, f̄_j, dst)
+                axpy!(-im * y_ij + im * z_ij, f_i, dst)
             end
             q = QRCompactWY(LAPACK.geqrt!(wspace, tmp)...)
             if i == 1
@@ -175,20 +205,25 @@ function simple_iteration(
             else
                 R[n .+ (1 : height), :] .= q.R
                 LAPACK.geqrt!(wspace, R)
-                for j in 1 : n
+                for j in 1 : 2 * n
                     fill!(@view(R[j + 1 : end, j]), zero(eltype(R)))
                 end
             end
         end
-        _, __, V = svd!(@view R[1 : n, :])
-        ws .= V[1 : end - 1, end]
-        push!(ws, V[end])
+        _, __, V = svd!(@view R[1 : 2 * n, :])
+        ws .= reinterpret(ComplexF64, @view V[1 : end - 2, end])
+        push!(ws, V[end - 1] + im * V[end])
         push!(F_int.perm, length(ws))
         sortperm!(F_int.perm, abs.(ws))
     end
     return GreensFunction(oqs.dim, F_int)
 end
 
+"""
+    steady_state(G :: GreensFunction)
+
+Returns steady state density matrix given converged Green's function.
+"""
 function steady_state(G :: GreensFunction)
     U, _, _ = svd!(G.g(0.0) + I)
     ret = reshape(U[:, 1], G.dim, G.dim)

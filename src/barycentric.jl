@@ -150,3 +150,79 @@ end
     F.values[i] * F.weights[i] * F.nodes[i] / (x ^ 2 - F.nodes[i] ^ 2) for i in F.perm
 ) / sum(F.weights[i] * x / (x ^ 2 - F.nodes[i] ^ 2) for i in F.perm)
 
+struct SymmetricBarycentricInterpolaton{M, V, A <: ElasticArray{V, M}, X <: Real, W <: Number, SW, SV} <: RationalInterpolation
+    nodes :: Vector{X}
+    weights :: Vector{W}
+    values :: A
+
+    sym_w :: SW
+    sym_v :: SV
+    perm :: Vector{Int}
+
+    function SymmetricBarycentricInterpolaton(nodes, weights, values, sym_w, sym_v)
+        if length(nodes) != length(weights) || size(values)[end] != length(nodes)
+            throw(DimensionMismatch("Arguments `nodes` and `weights` must have the same lengths"))
+        end
+        if any(nodes .<= 0.0)
+            throw(ArgumentError("All the nodes must be positive"))
+        end
+        perm = collect(eachindex(weights))
+        sortperm!(perm, abs.(weights))
+        values′ = values isa ElasticArray ? values : ElasticArray(values)
+        new{ndims(values), eltype(values), typeof(values′), eltype(nodes), eltype(weights), typeof(sym_w), typeof(sym_v)}(
+            nodes isa Vector ? nodes : vec(collect(nodes)),
+            weights isa Vector ? weights : vec(collect(weights)),
+            values′,
+            sym_w,
+            sym_v,
+            perm
+        )
+    end
+end
+
+
+function evaluate!(y, :: typeof(conj), x)
+    map!(conj, y, x)
+    y
+end
+
+evaluate!(__, :: SymmetricBarycentricInterpolaton{1}, _) = error("Not applicable")
+function evaluate!(y, F :: SymmetricBarycentricInterpolaton, x)
+    if size(y) != firstdims(F.values)
+        throw(DimensionMismatch("Output array dimension mismatch: expected $(size(F.values)[begin : end - 1]), got $(size(y))"))
+    end
+    j = findfirst(let x = x; z -> isapprox(z, x) end, F.nodes)
+    if j isa Nothing
+        j = findfirst(let x = -x; z -> isapprox(z, x) end, F.nodes)
+        if j isa Nothing
+            fill!(y, zero(eltype(y)))
+            den = zero(divtype(eltype(F.weights), promote_type(typeof(x), eltype(F.nodes))))
+            tmp1 = zero(den)
+            tmp2 = zero(den)
+            @inbounds for i in F.perm
+                tmp1 = F.weights[i] / (x - F.nodes[i])
+                tmp2 = F.sym_w(F.weights[i]) / (x + F.nodes[i])
+                den += tmp1
+                den += tmp2
+                axpy!(tmp1, slice(F.values, i), y)
+                evaluate!(y, F.sym_v, slice(F.values, i), tmp2, one(eltype(y)))
+            end
+            return (y ./= den)
+        else
+            evaluate!(y, F.sym_v, slice(F.values, j))
+        end
+    else
+        y .= slice(F.values, j)
+        return y
+    end
+end
+
+function (F :: SymmetricBarycentricInterpolaton)(x)
+    sz = size(F.values)[begin : end - 1]
+    T = divtype(
+        divtype(promote_type(eltype(F.values), eltype(F.weights)), promote_type(eltype(F.nodes), typeof(x))),
+        divtype(eltype(F.weights), promote_type(eltype(F.nodes), typeof(x)))
+    )
+    y = Array{T}(undef, sz)
+    evaluate!(y, F, x)
+end
