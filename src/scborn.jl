@@ -21,6 +21,7 @@ struct OQSystem{T <: AbstractMatrix, B}
 end
 
 struct GreensFunction{F <: RationalInterpolation} <: RationalInterpolation
+    dim :: Int
     g :: F
 end
 
@@ -49,6 +50,8 @@ function green_selfconsistency(oqs :: OQSystem, G, ω)
     tmp2 = Matrix{T}(undef, oqs.dim ^ 2, oqs.dim ^ 2)
     local rR, rK
     for b in oqs.baths
+        # poles of retarded and Keldysh components of
+        # bath's Green's function
         @inbounds for (i, p) in enumerate(b.K.poles)
             if i <= length(b.R.poles)
                 rR = slice(b.R.residues, i)
@@ -63,6 +66,12 @@ function green_selfconsistency(oqs :: OQSystem, G, ω)
                     end
                     mul!(ginv, tmp2, right′, rK[j, k], one(T))
                 end
+            end
+        end
+        # counterterm
+        @inbounds for (k, right) in enumerate(b.cpl_c)
+            @inbounds for (j, left) in enumerate(b.cpl_q)
+                mul!(ginv, left * right, one(eltype(right)), b.R.cnst[j, k], one(T))
             end
         end
     end
@@ -177,5 +186,12 @@ function simple_iteration(
         push!(F_int.perm, length(ws))
         sortperm!(F_int.perm, abs.(ws))
     end
-    return GreensFunction(F_int)
+    return GreensFunction(oqs.dim, F_int)
+end
+
+function steady_state(G :: GreensFunction)
+    U, _, _ = svd!(G.g(0.0) + I)
+    ret = reshape(U[:, 1], G.dim, G.dim)
+    ret ./= tr(ret)
+    return ret
 end

@@ -63,7 +63,7 @@ end
 Creates a BosonicBath object from spectral density `J`, temperature `T`, and list of coupling operators `cpl`.
 Function `J` must return a square matrix, it's size must coincide with length of `cpl`.
 """
-function BosonicBath(cpl, J :: Function, T :: Real, Ω_cutoff :: Real)
+function BosonicBath(cpl, J :: Function, T :: Real, Ω_cutoff :: Real, counterterm :: Bool = false)
     sz = size(first(cpl))
     S = eltype(first(cpl))
     R = let tmp = aaa_mat_odd(0.125 * T, Ω_cutoff, J)
@@ -76,6 +76,9 @@ function BosonicBath(cpl, J :: Function, T :: Real, Ω_cutoff :: Real)
         )
     end
     retardize!(R)
+    if counterterm
+        R.cnst .-= R(0.0)
+    end
     K = retarded_to_keldysh(R, T, Ω_cutoff)
     return BosonicBath(
         reduce(
@@ -84,6 +87,11 @@ function BosonicBath(cpl, J :: Function, T :: Real, Ω_cutoff :: Real)
         ),
         R, K
     )
+end
+
+function add_counterterm!(b :: BosonicBath)
+    b.R.cnst .= -b.R(0.0)
+    nothing
 end
 
 couplings(b :: BosonicBath) = (slice(b.cpl, i) for i in axes(b.cpl, 3))
