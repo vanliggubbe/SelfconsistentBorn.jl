@@ -1,4 +1,4 @@
-struct BosonicBath{T <: Number, F <: PoleInterpolation, G <: PoleInterpolation, S}
+struct BosonicBath{T <: Number, F <: PoleInterpolation, G <: Function, S}
     cpl :: ElasticArray{T, 3, 2, Vector{T}}
     R :: F
     K :: G
@@ -7,9 +7,9 @@ struct BosonicBath{T <: Number, F <: PoleInterpolation, G <: PoleInterpolation, 
     cpl_q :: Vector{S}
 
     function BosonicBath(cpl, R, K)
-        if (lastdim(cpl), lastdim(cpl)) != firstdims(R.residues) || (lastdim(cpl), lastdim(cpl)) != firstdims(K.residues)
-            throw(DimensionMismatch("Number of coupling operators must coincide with the bath spectral density dimension"))
-        end
+        #if (lastdim(cpl), lastdim(cpl)) != firstdims(R.residues) || (lastdim(cpl), lastdim(cpl)) != firstdims(K.residues)
+        #    throw(DimensionMismatch("Number of coupling operators must coincide with the bath spectral density dimension"))
+        #end
         class = [Commutator(slice(cpl, i), 1) for i in axes(cpl, 3)]
         quant = [Commutator(slice(cpl, i), -1) for i in axes(cpl, 3)]
         new{eltype(cpl), typeof(R), typeof(K), eltype(class)}(cpl, R, K, class, quant)
@@ -63,7 +63,7 @@ end
 Creates a BosonicBath object from spectral density `J`, temperature `T`, and list of coupling operators `cpl`.
 Function `J` must return a square matrix, it's size must coincide with length of `cpl`.
 """
-function BosonicBath(cpl, J :: Function, T :: Real, Ω_cutoff :: Real, counterterm :: Bool = false)
+function BosonicBath(cpl, J :: Function, T :: Real, Ω_cutoff :: Real, counterterm :: Bool = false; coth :: Symbol = :aaa)
     sz = size(first(cpl))
     S = eltype(first(cpl))
     R = let tmp = aaa_mat_odd(0.125 * T, Ω_cutoff, J)
@@ -71,7 +71,7 @@ function BosonicBath(cpl, J :: Function, T :: Real, Ω_cutoff :: Real, counterte
             OddBarycentricInterpolation(
                 tmp.nodes,
                 tmp.weights,
-                -im * tmp.values
+                -1.0im * tmp.values
             )
         )
     end
@@ -79,7 +79,12 @@ function BosonicBath(cpl, J :: Function, T :: Real, Ω_cutoff :: Real, counterte
     if counterterm
         R.cnst .-= R(0.0)
     end
-    K = retarded_to_keldysh(R, T, Ω_cutoff)
+    local K
+    if coth == :aaa
+        K = retarded_to_keldysh(R, T, Ω_cutoff)
+    elseif coth == :digamma
+        K = Keldysh(R, T)
+    end
     return BosonicBath(
         reduce(
             append!, cpl;
@@ -95,3 +100,50 @@ function add_counterterm!(b :: BosonicBath)
 end
 
 couplings(b :: BosonicBath) = (slice(b.cpl, i) for i in axes(b.cpl, 3))
+
+bose_R(ω, T) = -digamma(ω / (2π * im * T) + 1.0) / (im * π)
+bose_A(ω, T) = digamma(-ω / (2π * im * T) + 1.0) / (im * π)
+
+struct Keldysh{S <: Real, TR <: PoleInterpolation} <: Function
+    R :: TR
+    A :: TR
+    R′ :: TR
+    A′ :: TR
+    T :: S
+
+    function Keldysh(R, T)
+        A = PoleInterpolation(
+            conj(R.poles), similar(R.residues), Matrix(R.cnst')
+        )
+        @inbounds for i in axes(A.residues, 3)
+            adjoint!(slice(A.residues, i), slice(R.residues, i))
+        end
+
+        R′ = PoleInterpolation(R.poles, copy(R.residues), zero(R.cnst))
+        for (p, r) in zip(poles(R′), residues(R′))
+            lmul!(bose_A(p, T) + (2.0 * T / p), r)
+        end
+        A′ = PoleInterpolation(A.poles, copy(A.residues), zero(A.cnst))
+        for (p, r) in zip(poles(A′), residues(A′))
+            lmul!(bose_R(p, T), r)
+        end
+                
+        new{typeof(T), typeof(R)}(R, A, R′, A′, T)
+    end
+end
+
+
+function (F :: Keldysh)(ω)
+    y = zeros(ComplexF64, firstdims(F.R.residues))
+    evaluate!(y, F, ω)
+end
+
+function evaluate!(y, F :: Keldysh, ω)
+    b = bose_R(ω, F.T)
+    evaluate!(y, F.R, ω)
+    lmul!(b, y)
+    evaluate!(y, F.R′, ω, 1.0, one(eltype(y)))
+    evaluate!(y, F.A, ω, -b, one(eltype(y)))
+    evaluate!(y, F.A′, ω, 1.0, one(eltype(y)))
+    y
+end

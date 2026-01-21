@@ -26,7 +26,7 @@ function _unsafe_mul!(y, P :: AdjointMap{<: Any, <: PermutationMap}, x :: Abstra
 end
 
 function _unsafe_mul!(y, P :: TransposeMap{<: Any, <: PermutationMap}, x :: AbstractVector) 
-    @views y[P.parent.p] .= x
+    @views y[P.lmap.p] .= x
     y
 end
 

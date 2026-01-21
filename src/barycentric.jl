@@ -217,6 +217,37 @@ function evaluate!(y, F :: SymmetricBarycentricInterpolaton, x)
     end
 end
 
+function evaluate_diff!(y, F :: SymmetricBarycentricInterpolaton, x)
+    if size(y) != firstdims(F.values)
+        throw(DimensionMismatch("Output array dimension mismatch: expected $(size(F.values)[begin : end - 1]), got $(size(y))"))
+    end
+    j = findfirst(let x = x; z -> isapprox(z, x) end, F.nodes)
+    if j isa Nothing
+        j = findfirst(let x = -x; z -> isapprox(z, x) end, F.nodes)
+        if j isa Nothing
+            fill!(y, zero(eltype(y)))
+            den = zero(divtype(eltype(F.weights), promote_type(typeof(x), eltype(F.nodes))))
+            tmp1 = zero(den)
+            tmp2 = zero(den)
+            @inbounds for i in F.perm
+                tmp1 = F.weights[i] / (x - F.nodes[i])
+                tmp2 = F.sym_w(F.weights[i]) / (x + F.nodes[i])
+                den += tmp1
+                den += tmp2
+                axpy!(tmp1, slice(F.values, i), y)
+                evaluate!(y, F.sym_v, slice(F.values, i), tmp2, one(eltype(y)))
+            end
+            return (y ./= den)
+        else
+            evaluate!(y, F.sym_v, slice(F.values, j))
+        end
+    else
+        y .= slice(F.values, j)
+        return y
+    end
+end
+
+
 function (F :: SymmetricBarycentricInterpolaton)(x)
     sz = size(F.values)[begin : end - 1]
     T = divtype(
@@ -225,4 +256,19 @@ function (F :: SymmetricBarycentricInterpolaton)(x)
     )
     y = Array{T}(undef, sz)
     evaluate!(y, F, x)
+end
+
+function poles(F :: SymmetricBarycentricInterpolaton)
+    B = Matrix(1.0I, 1 + 2 * length(F.nodes), 1 + 2 * length(F.nodes))
+    B[1, 1] = 0.0
+    A = zeros(promote_type(eltype(F.weights), eltype(F.nodes)), size(B))
+    @inbounds for i in eachindex(F.weights, F.nodes)
+        A[1, 1 + i] = sqrt(abs(F.weights[i]))
+        A[1, 1 + i + length(F.weights)] = sqrt(abs(F.sym_w.(F.weights[i])))
+        A[1 + i, 1] = F.weights[i] / A[1, 1 + i]
+        A[1 + i + length(F.weights), 1] = F.sym_w.(F.weights[i]) / A[1, 1 + i + length(F.weights)]
+        A[1 + i, 1 + i] = F.nodes[i]
+        A[1 + i + length(F.weights), 1 + i + length(F.weights)] = -F.nodes[i]
+    end
+    return filter(isfinite, eigvals(A, B; sortby = imag))
 end

@@ -22,94 +22,25 @@ struct OQSystem{T <: AbstractMatrix, B, P}
     end
 end
 
-struct GreensFunction{F <: RationalInterpolation} <: RationalInterpolation
-    dim :: Int
-    g :: F
-end
-
-function evaluate!(y, F :: GreensFunction, x)
-    evaluate!(y, F.g, x)
-    @assert size(y, 1) == size(y, 2)
-    @inbounds for i in axes(y, 1)
-        y[i, i] += one(eltype(y))
-    end
-    ldiv!(x, y)
-end
-
-(F :: GreensFunction)(x) = (F.g(x) + I) / x
-
-# TODO smarter than this
-function green_0(oqs :: OQSystem)
-    L = Matrix(Commutator(oqs.H, -1))
-    Λ, Ψ = eigen(L)
-    return PoleInterpolation(Λ, [Ψ[:, i] * Ψ[:, i]' for i in 1 : size(Ψ, 2)])
-end
-
-function green_selfconsistency(oqs :: OQSystem, G, ω)
-    T = promote_type(ComplexF64, eltype(oqs.H))
-    ginv = zeros(T, oqs.dim ^ 2, oqs.dim ^ 2)
-    gtmp = Matrix{T}(undef, oqs.dim ^ 2, oqs.dim ^ 2)
-    tmp2 = Matrix{T}(undef, oqs.dim ^ 2, oqs.dim ^ 2)
-    local rR, rK
-    for b in oqs.baths
-        # poles of retarded and Keldysh components of
-        # bath's Green's function
-        @inbounds for (i, p) in enumerate(b.K.poles)
-            if i <= length(b.R.poles)
-                rR = slice(b.R.residues, i)
-            end
-            rK = slice(b.K.residues, i)
-            evaluate!(gtmp, G, ω - p)
-            @inbounds for (j, left) in enumerate(b.cpl_q)
-                mul!(tmp2, left', gtmp)
-                @inbounds for (k, (right, right′)) in enumerate(zip(b.cpl_c, b.cpl_q))
-                    if i <= length(b.R.poles)
-                        mul!(ginv, tmp2, right, rR[j, k], one(T))
-                    end
-                    mul!(ginv, tmp2, right′, rK[j, k], one(T))
-                end
-            end
-        end
-        # counterterm
-        @inbounds for (k, right) in enumerate(b.cpl_c)
-            @inbounds for (j, left) in enumerate(b.cpl_q)
-                mul!(ginv, left * right, one(eltype(right)), b.R.cnst[j, k], one(T))
-            end
-        end
-    end
-    ginv .+= Matrix(Commutator(oqs.H, -1))
-    lmul!(-one(T), ginv)
-    axpy!(ω, I(oqs.dim ^ 2), ginv)
-    return inv(ginv)
-end
-
-function simple_iteration(
+function _simple_iteration(
     oqs :: OQSystem,
-    X,
-    Ω_cutoff :: Real,
-    which = :green;
+    F :: Function,
+    Ω_cutoff :: Real;
     aaa_iter :: Int = 20,
     aaa_eps :: Real = 1e-9,
     aaa_split :: Function = (n -> max(3, 20 - n)),
     nrm :: Function = norm
 )
-    F = (which == :green) ? (
-        let oqs = oqs, G = X; ω -> (green_selfconsistency(oqs, G, ω) * ω - I) end
-    ) : (
-        which == :selfenergy ? nothing : nothing
-    )
-
     # TODO add possibility of a true zero
-    ωs = [1e-6, Ω_cutoff]
+    ωs = [1e-3, Ω_cutoff]
     fs = reduce(
         append!, F.(ωs);
         init = ElasticArray{ComplexF64}(undef, oqs.dim ^ 2, oqs.dim ^ 2, 0)
     )
     ws = [(-1.0 + 0.0im) ^ i for i in 1 : length(ωs)]
     sym_f = conj ∘ oqs.perm
-    # symmetric weights and values
+    # symmetric values
     fs′ = similar(fs)
-    ws′ = conj(ws)
     @inbounds for i in axes(fs′, 3)
         evaluate!(slice(fs′, i), sym_f, slice(fs, i))
     end
@@ -216,17 +147,8 @@ function simple_iteration(
         push!(F_int.perm, length(ws))
         sortperm!(F_int.perm, abs.(ws))
     end
-    return GreensFunction(oqs.dim, F_int)
+    return F_int
 end
 
-"""
-    steady_state(G :: GreensFunction)
-
-Returns steady state density matrix given converged Green's function.
-"""
-function steady_state(G :: GreensFunction)
-    U, _, _ = svd!(G.g(0.0) + I)
-    ret = reshape(U[:, 1], G.dim, G.dim)
-    ret ./= tr(ret)
-    return ret
-end
+include("greens.jl")
+include("selfenergy.jl")

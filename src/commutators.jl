@@ -11,6 +11,8 @@ struct Commutator{T, M <: Union{AbstractMatrix{T}, LinearMap{T}}} <: LinearMap{T
     end
 end
 
+Commutator(A) = Commutator(A, -1)
+
 Base.adjoint(A :: Commutator) = Commutator(A.A', A.sign)
 Base.transpose(A :: Commutator) = Commutator(transpose(A.A), A.sign)
 Base.size(A :: Commutator) = (A.n ^ 2, A.n ^ 2)

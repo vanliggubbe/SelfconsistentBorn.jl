@@ -1,12 +1,14 @@
 module SelfconsistentBorn
 
-import LinearAlgebra: I, norm, tr, axpy!, axpby!, adjoint!, svd!, Diagonal, eigvals, lmul!, mul!, eigen, ldiv!, QRCompactWY, tr
+import LinearAlgebra: I, norm, tr, axpy!, axpby!, adjoint!, svd!, Diagonal, eigvals, lmul!, mul!, eigen, ldiv!, QRCompactWY, tr, LU, rdiv!
 import ElasticArrays: ElasticArray, ElasticMatrix, ElasticVector
 import LinearMaps: LinearMap, _unsafe_mul!, MulStyle, FiveArg, AdjointMap, TransposeMap
-import FastLapackInterface: QRWYWs, LAPACK
+import FastLapackInterface: QRWYWs, LAPACK, LUWs
+import SpecialFunctions: digamma
 
 export BosonicBath, OQSystem
-export green_0, green_selfconsistency, simple_iteration, steady_state
+export green_0, self_energy_0, selfconsistency, simple_iteration, steady_state
+export Commutator
 
 abstract type RationalInterpolation <: Function end
 include("utils.jl")

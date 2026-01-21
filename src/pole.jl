@@ -40,6 +40,22 @@ function evaluate!(y, F :: PoleInterpolation, x)
     return y
 end
 
+function evaluate!(y, F :: PoleInterpolation, x, α :: Number, β :: Number)
+    axpby!(α, F.cnst, β, y)
+    @inbounds for i in eachindex(F.poles)
+        axpy!(α / (x - F.poles[i]), slice(F.residues, i), y)
+    end
+    return y
+end
+
+function evaluate_diff!(y, F :: PoleInterpolation, x)
+    fill!(y, eltype(y))
+    @inbounds for i in eachindex(F.poles)
+        axpy!(-inv(x - F.poles[i]) ^ 2, slice(F.residues, i), y)
+    end
+    return y
+end
+
 function (F :: PoleInterpolation{1})(x)
     ret = convert(
         promote_type(
@@ -113,3 +129,35 @@ function PoleInterpolation(F :: OddBarycentricInterpolation)
         zero(first(N_pol))
     )
 end
+
+function PoleInterpolation(F :: SymmetricBarycentricInterpolaton)
+    # get poles
+    pol = poles(F)
+
+    # get residues
+    C_pol = inv.(
+        pol * ones(length(F.nodes) * 2)' -
+        ones(length(pol)) * transpose([F.nodes; -F.nodes])
+    )
+    ws = [
+        F.weights;
+        F.sym_w.(F.weights)
+    ]
+    vs = cat(F.values, F.values; dims = ndims(F.values))
+    for i in axes(F.values, ndims(F.values))
+        evaluate!(slice(vs, i + size(F.values, 3)), F.sym_v, slice(F.values, i))
+    end
+    N_pol = C_pol * [slice(vs, i) * ws[i] for  i in eachindex(ws)]
+    Ddiff_pol = (-C_pol .^ 2) * ws
+    N_pol ./= Ddiff_pol
+
+    return PoleInterpolation(
+        pol,
+        N_pol,
+        zero(first(N_pol))
+    )
+end
+
+poles(f :: PoleInterpolation) = f.poles
+residues(f :: PoleInterpolation{1}) = f.residues
+residues(f :: PoleInterpolation) = (slice(f.residues, i) for i in axes(f.residues, ndims(f.residues)))
