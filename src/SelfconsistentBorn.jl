@@ -1,6 +1,6 @@
 module SelfconsistentBorn
 
-import LinearAlgebra: I, norm, tr, axpy!, axpby!, adjoint!, svd!, Diagonal, eigvals, lmul!, mul!, eigen, ldiv!, QRCompactWY, tr, LU, rdiv!
+import LinearAlgebra: I, norm, tr, axpy!, axpby!, adjoint!, svd!, Diagonal, eigvals, lmul!, mul!, eigen, ldiv!, QRCompactWY, tr, LU, rdiv!, svd, ishermitian, issymmetric
 import ElasticArrays: ElasticArray, ElasticMatrix, ElasticVector
 import LinearMaps: LinearMap, _unsafe_mul!, MulStyle, FiveArg, AdjointMap, TransposeMap
 import FastLapackInterface: QRWYWs, LAPACK, LUWs

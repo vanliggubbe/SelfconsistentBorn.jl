@@ -1,18 +1,17 @@
-struct BosonicBath{T <: Number, F <: PoleInterpolation, G <: Function, S}
-    cpl :: ElasticArray{T, 3, 2, Vector{T}}
+struct BosonicBath{F <: PoleInterpolation, G <: Function, T1 <: Tuple{Vararg{Commutator}}, T2 <: Tuple{Vararg{Commutator}}}
     R :: F
     K :: G
 
-    cpl_c :: Vector{S}
-    cpl_q :: Vector{S}
+    cpl_c :: T1
+    cpl_q :: T2
 
     function BosonicBath(cpl, R, K)
         #if (lastdim(cpl), lastdim(cpl)) != firstdims(R.residues) || (lastdim(cpl), lastdim(cpl)) != firstdims(K.residues)
         #    throw(DimensionMismatch("Number of coupling operators must coincide with the bath spectral density dimension"))
         #end
-        class = [Commutator(slice(cpl, i), 1) for i in axes(cpl, 3)]
-        quant = [Commutator(slice(cpl, i), -1) for i in axes(cpl, 3)]
-        new{eltype(cpl), typeof(R), typeof(K), eltype(class)}(cpl, R, K, class, quant)
+        class = Tuple(Commutator(q, 1) for q in cpl)
+        quant = Tuple(Commutator(q, -1) for q in cpl)
+        new{typeof(R), typeof(K), typeof(class), typeof(quant)}(R, K, class, quant)
     end
 end
 
@@ -64,8 +63,6 @@ Creates a BosonicBath object from spectral density `J`, temperature `T`, and lis
 Function `J` must return a square matrix, it's size must coincide with length of `cpl`.
 """
 function BosonicBath(cpl, J :: Function, T :: Real, Ω_cutoff :: Real, counterterm :: Bool = false; coth :: Symbol = :aaa)
-    sz = size(first(cpl))
-    S = eltype(first(cpl))
     R = let tmp = aaa_mat_odd(0.125 * T, Ω_cutoff, J)
         PoleInterpolation(
             OddBarycentricInterpolation(
@@ -86,10 +83,7 @@ function BosonicBath(cpl, J :: Function, T :: Real, Ω_cutoff :: Real, counterte
         K = Keldysh(R, T)
     end
     return BosonicBath(
-        reduce(
-            append!, cpl;
-            init = ElasticArray{S}(undef, sz..., 0)
-        ),
+        cpl,
         R, K
     )
 end
@@ -99,7 +93,7 @@ function add_counterterm!(b :: BosonicBath)
     nothing
 end
 
-couplings(b :: BosonicBath) = (slice(b.cpl, i) for i in axes(b.cpl, 3))
+#couplings(b :: BosonicBath) = (slice(b.cpl, i) for i in axes(b.cpl, 3))
 
 bose_R(ω, T) = -digamma(ω / (2π * im * T) + 1.0) / (im * π)
 bose_A(ω, T) = digamma(-ω / (2π * im * T) + 1.0) / (im * π)

@@ -4,6 +4,12 @@ struct OQSystem{T <: AbstractMatrix, B, P}
     baths :: B
     perm :: PermutationMap{P}
 
+    L :: Matrix{ComplexF64}
+    # allocations for calculations
+    ginv :: Matrix{ComplexF64}
+    tmp1 :: Matrix{ComplexF64}
+    tmp2 :: Matrix{ComplexF64}
+
     function OQSystem(H, baths)
         if size(H, 1) != size(H, 2)
             throw(DimensionMismatch("Hamiltonian must be square matrix"))
@@ -14,11 +20,16 @@ struct OQSystem{T <: AbstractMatrix, B, P}
             if !(b isa BosonicBath)
                 throw(ArgumentError("Each element of `bath` must have a type of bosonic bath"))
             end
-            if firstdims(b.cpl) != (dim, dim)
-                throw(DimensionMismatch("Dimensions of the Hamiltonian and the coupling operators must coincide"))
+            for (c, q) in zip(b.cpl_c, b.cpl_q)
+                if size(c) != (dim ^ 2, dim ^ 2) || size(q) != (dim ^ 2, dim ^ 2)
+                    throw(DimensionMismatch("Dimensions of the Hamiltonian and the coupling operators must coincide"))
+                end
             end
         end
-        new{typeof(H), typeof(baths), typeof(perm)}(dim, H, baths, PermutationMap(perm))
+        # liouvillian
+        L = Matrix{ComplexF64}(undef, dim ^ 2, dim ^ 2)
+        mul!(L, Commutator(H), 1.0)
+        new{typeof(H), typeof(baths), typeof(perm)}(dim, H, baths, PermutationMap(perm), L, similar(L), similar(L), similar(L))
     end
 end
 
@@ -31,35 +42,58 @@ function _simple_iteration(
     aaa_split :: Function = (n -> max(3, 20 - n)),
     nrm :: Function = norm
 )
-    # TODO add possibility of a true zero
-    ωs = [1e-3, Ω_cutoff]
-    fs = reduce(
-        append!, F.(ωs);
-        init = ElasticArray{ComplexF64}(undef, oqs.dim ^ 2, oqs.dim ^ 2, 0)
-    )
+
+    # initialize support points
+    ωs = [Ω_cutoff]
+    fs = ElasticArray{ComplexF64}(undef, oqs.dim ^ 2, oqs.dim ^ 2, length(ωs))
+    @inbounds for i in eachindex(ωs)
+        F(slice(fs, i), ωs[i])
+    end
     ws = [(-1.0 + 0.0im) ^ i for i in 1 : length(ωs)]
-    sym_f = conj ∘ oqs.perm
+
     # symmetric values
+    sym_f = conj ∘ oqs.perm    
     fs′ = similar(fs)
     @inbounds for i in axes(fs′, 3)
         evaluate!(slice(fs′, i), sym_f, slice(fs, i))
     end
     F_int = SymmetricBarycentricInterpolaton(ωs, ws, fs, conj, sym_f)
+
     @assert F_int.nodes === ωs
     @assert F_int.weights === ws
     @assert F_int.values === fs
 
+    # points between support
     νs = reduce(
         vcat,
         collect(LinRange(a, b, aaa_split(0) + 2))[2 : end - 1]
-        for (a, b) in zip(@view(ωs[1 : end - 1]), @view(ωs[2 : end]))
+        for (a, b) in zip([0.0;  ωs[1 : end - 1]], ωs)
     )
-    gs = reduce(
-        append!, F.(νs);
-        init = ElasticArray{ComplexF64}(undef, oqs.dim ^ 2, oqs.dim ^ 2, 0)
-    )
+    gs = ElasticArray{ComplexF64}(undef, oqs.dim ^ 2, oqs.dim ^ 2, length(νs))
+    @inbounds for i in eachindex(νs)
+        F(slice(gs, i), νs[i])
+    end
+
+    # preparing auxiliary arrays for tall and skinny QR
+    nmax = aaa_iter + length(ωs)
+    R = zeros(Float64, 4 * nmax, 2 * nmax)
+    tmp = Matrix{Float64}(undef, 2 * oqs.dim ^ 4, 2 * nmax)
+    wspace = QRWYWs(tmp) # LAPACK workspace for multiple QRs
+    tmp2 = zeros(ComplexF64, oqs.dim ^ 2, oqs.dim ^ 2)
+
     for it in 1 : aaa_iter
-        er, j = findmax(i -> nrm(F_int(νs[i]) - slice(gs, i)), eachindex(νs))
+        # find the point of the grid
+        # which is approximated the worst
+        j = 0
+        er = -Inf
+        @inbounds for i in eachindex(νs)
+            evaluate!(tmp2, F_int, νs[i])
+            axpy!(-1.0, slice(gs, i), tmp2)
+            if nrm(tmp2) > er
+                er = nrm(tmp2)
+                j = i
+            end
+        end
         if er < aaa_eps
             break
         end
@@ -74,7 +108,7 @@ function _simple_iteration(
         evaluate!(slice(fs′, size(fs′, 3)), sym_f, slice(fs, size(fs, 3)))
 
         # delete points
-        left = maximum(ωs[ωs .< new_ω])
+        left = maximum(ωs[ωs .< new_ω]; init = 0.0)
         right = minimum(ωs[ωs .> new_ω])
         n_left = sum(left .< νs .< new_ω)
         n_right = sum(new_ω .< νs .< right)
@@ -87,31 +121,29 @@ function _simple_iteration(
             end
             cur -= 1
         end
-        resize!(νs, cur)
-        resize!(gs, firstdims(gs)..., cur)
 
         # add new points
         new_νs = [
             collect(LinRange(left, new_ω, max(n_left, aaa_split(it)) + 2))[2 : end - 1];
             collect(LinRange(new_ω, right, max(n_right, aaa_split(it)) + 2))[2 : end - 1]
         ]
-        append!(νs, new_νs)
-        for ν in new_νs
-            append!(gs, F(ν))
+        resize!(gs, (firstdims(gs)..., cur + length(new_νs)))
+        idx = (cur + 1) : (cur + length(new_νs))
+        @inbounds for (i, ν) in zip(idx, new_νs)
+            F(slice(gs, i), ν)
         end
+        resize!(νs, cur + length(new_νs))
+        νs[idx] .= new_νs
 
         # do tall and skinny SVD
-        n = length(ωs)
-        R = zeros(Float64, 4 * n, 2 * n)
-        tmp = Matrix{Float64}(undef, 2 * oqs.dim ^ 4, 2 * n)
-        height = min(n, oqs.dim ^ 4) * 2
-        wspace = QRWYWs(tmp) # LAPACK workspace for multiple QRs
-
-        local y_ij, z_ij, f_i, f_j, f̄_j
+        n = length(ωs)                      # number of points, half number of columns
+        height = min(n, oqs.dim ^ 4) * 2    # height of a single layer
+        y_ij :: ComplexF64 = 0.0
+        z_ij :: ComplexF64 = 0.0
+        local f_i, f_j, f̄_j, dst
+        height_R :: Int = 0                 # height of current partial QR decomposition
         @inbounds for i in eachindex(νs)
             f_i = vec(slice(gs, i))
-            # views on real and imaginary parts
-            #mul!(tmp, -one(Float64), reinterpret(Float64, reshape(fs, oqs.dim ^ 4, n)))
             @inbounds for j in eachindex(ωs)
                 f_j = vec(slice(fs, j))
                 f̄_j = vec(slice(fs′, j))
@@ -130,18 +162,21 @@ function _simple_iteration(
                 axpy!(-im * z_ij, f̄_j, dst)
                 axpy!(-im * y_ij + im * z_ij, f_i, dst)
             end
-            q = QRCompactWY(LAPACK.geqrt!(wspace, tmp)...)
+            q = QRCompactWY(LAPACK.geqrt!(wspace, view(tmp, :, 1 : (2 * n)))...)
             if i == 1
-                R[1 : height, :] .= q.R
+                R[1 : height, 1 : (2 * n)] .= q.R
+                height_R = height
             else
-                R[n .+ (1 : height), :] .= q.R
-                LAPACK.geqrt!(wspace, R)
-                for j in 1 : 2 * n
-                    fill!(@view(R[j + 1 : end, j]), zero(eltype(R)))
+                @views R[height_R .+ (1 : height), 1 : (2 * n)] .= q.R
+                height_R += height
+                LAPACK.geqrt!(wspace, @view R[1 : height_R, 1 : (2 * n)])
+                height_R = min(height_R, 2 * n)
+                @inbounds for j in 1 : height_R - 1
+                    fill!(@view(R[(j + 1) : height_R, j]), zero(eltype(R)))
                 end
             end
         end
-        _, __, V = svd!(@view R[1 : 2 * n, :])
+        _, __, V = svd!(@view R[1 : 2 * n, 1 : 2 * n])
         ws .= reinterpret(ComplexF64, @view V[1 : end - 2, end])
         push!(ws, V[end - 1] + im * V[end])
         push!(F_int.perm, length(ws))
