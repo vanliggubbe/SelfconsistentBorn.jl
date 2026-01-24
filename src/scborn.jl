@@ -15,7 +15,7 @@ struct OQSystem{T <: AbstractMatrix, B, P}
             throw(DimensionMismatch("Hamiltonian must be square matrix"))
         end
         dim = size(H, 1)
-        perm = vec(transpose(reshape(1 : dim ^ 2, dim, dim)))
+        perm = collect(vec(transpose(reshape(1 : dim ^ 2, dim, dim))))
         for b in baths
             if !(b isa BosonicBath)
                 throw(ArgumentError("Each element of `bath` must have a type of bosonic bath"))
@@ -78,7 +78,7 @@ function _simple_iteration(
     nmax = aaa_iter + length(ωs)
     R = zeros(Float64, 4 * nmax, 2 * nmax)
     tmp = Matrix{Float64}(undef, 2 * oqs.dim ^ 4, 2 * nmax)
-    wspace = QRWYWs(tmp) # LAPACK workspace for multiple QRs
+    wspace = QRWYWs(length(R) > length(tmp) ? R : tmp; blocksize = min(2 * nmax, 2 * oqs.dim ^ 4)) # LAPACK workspace for multiple QRs
     tmp2 = zeros(ComplexF64, oqs.dim ^ 2, oqs.dim ^ 2)
 
     for it in 1 : aaa_iter
@@ -142,6 +142,7 @@ function _simple_iteration(
         z_ij :: ComplexF64 = 0.0
         local f_i, f_j, f̄_j, dst
         height_R :: Int = 0                 # height of current partial QR decomposition
+        cols = 1 : (2 * n)
         @inbounds for i in eachindex(νs)
             f_i = vec(slice(gs, i))
             @inbounds for j in eachindex(ωs)
@@ -162,21 +163,21 @@ function _simple_iteration(
                 axpy!(-im * z_ij, f̄_j, dst)
                 axpy!(-im * y_ij + im * z_ij, f_i, dst)
             end
-            q = QRCompactWY(LAPACK.geqrt!(wspace, view(tmp, :, 1 : (2 * n)))...)
+            # do QR factorization of the slice
+            LAPACK.geqrt!(wspace, view(tmp, :, cols))
+            triu!(@view tmp[1 : height, cols])
             if i == 1
-                R[1 : height, 1 : (2 * n)] .= q.R
+                @views R[1 : height, cols] .= tmp[1 : height, cols]
                 height_R = height
             else
-                @views R[height_R .+ (1 : height), 1 : (2 * n)] .= q.R
+                @views R[(height_R + 1) : (height_R + height), cols] .= tmp[1 : height, cols]
                 height_R += height
-                LAPACK.geqrt!(wspace, @view R[1 : height_R, 1 : (2 * n)])
+                LAPACK.geqrt!(wspace, @view R[1 : height_R, cols])
                 height_R = min(height_R, 2 * n)
-                @inbounds for j in 1 : height_R - 1
-                    fill!(@view(R[(j + 1) : height_R, j]), zero(eltype(R)))
-                end
+                triu!(@view R[1 : height_R, cols])
             end
         end
-        _, __, V = svd!(@view R[1 : 2 * n, 1 : 2 * n])
+        _, __, V = svd!(@view R[1 : height_R, cols])
         ws .= reinterpret(ComplexF64, @view V[1 : end - 2, end])
         push!(ws, V[end - 1] + im * V[end])
         push!(F_int.perm, length(ws))
