@@ -1,16 +1,28 @@
 using SelfconsistentBorn
 using LinearAlgebra
-using LinearMaps
+using BenchmarkTools
 
 n_fock = 12
 H = Diagonal(0 : n_fock - 1)
 q = SymTridiagonal(zeros(n_fock), sqrt.((1 : n_fock - 1) * 0.5))
 
 bath = BosonicBath([q], ω -> ones(1, 1) * 0.05 * ω / (1.0 + ω ^ 2 / 400.0), 0.8, 400.0, true; coth = :aaa)
-oqs = OQSystem(H, [bath])
-Σ = self_energy_0(oqs)
-for i in 1 : 1
-    global Σ
-    Σ = simple_iteration(oqs, Σ, 400.0, 6.0 - i; aaa_iter = 40)
-    display(steady_state(oqs, Σ))
-end
+
+println("Benchmarking (anti)commutators")
+display(@benchmark mul!($(zeros(ComplexF64, 144, 144)), $(bath.cpl_q[1]'), $(randn(144, 144))))
+display(@benchmark mul!($(zeros(ComplexF64, 144, 144)), $(randn(144, 144)), $(bath.cpl_c[1])))
+display(@benchmark mul!($(zeros(ComplexF64, 144, 144)), $(randn(144, 144)), $(bath.cpl_q[1])))
+
+# creating bath
+oqs = OQSystem(H, (bath,))
+Σ0 = self_energy_0(oqs)
+println("Self-energy evaluation")
+display(@benchmark SelfconsistentBorn.evaluate!($(zeros(ComplexF64, 144, 144)), $Σ0, 1.0))
+println("Selfconsistency evaluation")
+display(@benchmark SelfconsistentBorn.selfconsistency!($zeros(ComplexF64, 144, 144), $oqs, $Σ0, 1.23))
+
+Σ = simple_iteration(oqs, Σ0, 400.0, 1.0; aaa_iter = 40)
+println("Self-energy evaluation")
+display(@benchmark SelfconsistentBorn.evaluate!($(zeros(ComplexF64, 144, 144)), $Σ, 1.0))
+println("Selfconsistency evaluation")
+display(@benchmark SelfconsistentBorn.selfconsistency!($zeros(ComplexF64, 144, 144), $oqs, $Σ, 1.23))
