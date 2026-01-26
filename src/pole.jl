@@ -1,4 +1,4 @@
-mutable struct PoleInterpolation{N, T, A <: ElasticArray{T, N}, C, P <: Number} <: RationalInterpolation
+mutable struct PoleInterpolation{N, T, A <: ElasticArray{T, N}, C, P <: Number} <: RationalInterpolation{N}
     poles :: Vector{P}
     residues :: A
     cnst :: C

@@ -13,6 +13,23 @@ Base.size(p :: PermutationMap) = (length(p.p), length(p.p))
 Base.iterate(p :: PermutationMap) = iterate(p.p)
 Base.iterate(p :: PermutationMap, i) = iterate(p.p, i)
 
+function lmul!(p :: PermutationMap, q :: PermutationMap)
+    q.p .= q.p[p.p]
+    q
+end
+function rmul!(p :: PermutationMap, q :: PermutationMap)
+    p.p .= q.p[p.p]
+    p
+end
+function lmul!(p :: AdjointMap{<: Any, <: PermutationMap}, q :: PermutationMap)
+    q.p[p.p] .= copy(q.p)
+    q
+end
+function rmul!(p :: PermutationMap, q :: AdjointMap{<: Any, <: PermutationMap})
+    p.p .= view(invperm(q.p), p.p)
+    p
+end
+
 MulStyle(::PermutationMap) = FiveArg()
 
 function _unsafe_mul!(y, P :: PermutationMap, x :: AbstractVector)
@@ -51,7 +68,7 @@ end
 Overwrite `Y` with `P * X * P'`
 """
 function evaluate!(y, p :: PermutationMap, x :: AbstractMatrix) 
-    (@views y[:, p.p] .= x[p.p, :])
+    (@views y .= x[p.p, p.p])
     y
 end
 
@@ -61,7 +78,7 @@ end
 Overwrite `Y` with  `α * (P * Y * P') + β * Y`
 """
 function evaluate!(y, p :: PermutationMap, x :: AbstractMatrix, α :: Number, β :: Number)
-    (@views axpby!(α, x[p.p, :], β, y[:, p.p]))
+    (@views axpby!(α, x[p.p, p.p], β, y))
     y
 end
 

@@ -1,4 +1,4 @@
-struct GreensFunction{F <: RationalInterpolation} <: RationalInterpolation
+struct GreensFunction{F <: RationalInterpolation{3}}
     dim :: Int
     g :: F
 end

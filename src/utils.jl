@@ -15,3 +15,21 @@ end
 
 @inline flatten(x :: Number) = x
 @inline flatten(x :: Array) = vec(x)
+
+block_structure!(:: IntDisjointSet, :: AbstractVector; ε :: Real = 1e-12) = error("Not applicable")
+
+function block_structure!(blocks :: IntDisjointSet, a :: AbstractMatrix; ε :: Real = 1e-12)
+    @inbounds for i in axes(a, 2)
+        @inbounds for j in axes(a, 1)
+            if abs(a[j, i]) > ε
+                union!(blocks, i, j)
+            end
+        end
+    end
+end
+
+function block_structure!(block :: IntDisjointSet, a :: AbstractArray; ε :: Real = 1e-12)
+    @inbounds for i in axes(a, ndims(a))
+        block_structure!(block, slice(a, i); ε)
+    end
+end

@@ -1,4 +1,4 @@
-mutable struct BarycentricInterpolation{M, V, A <: ElasticArray{V, M}, X <: Number, W <: Number} <: RationalInterpolation
+mutable struct BarycentricInterpolation{M, V, A <: ElasticArray{V, M}, X <: Number, W <: Number} <: RationalInterpolation{M}
     nodes :: Vector{X}
     weights :: Vector{W}
     values :: A
@@ -104,7 +104,7 @@ end
 
 add_node!(F, node, value) = add_node!(F, node, zero(eltype(F.weights)), value)
 
-mutable struct OddBarycentricInterpolation{M, V, A <: ElasticArray{V, M}, X <: Real, W <: Number} <: RationalInterpolation
+mutable struct OddBarycentricInterpolation{M, V, A <: ElasticArray{V, M}, X <: Real, W <: Number} <: RationalInterpolation{M}
     nodes :: Vector{X}
     weights :: Vector{W}
     values :: A
@@ -150,7 +150,7 @@ end
     F.values[i] * F.weights[i] * F.nodes[i] / (x ^ 2 - F.nodes[i] ^ 2) for i in F.perm
 ) / sum(F.weights[i] * x / (x ^ 2 - F.nodes[i] ^ 2) for i in F.perm)
 
-struct SymmetricBarycentricInterpolaton{M, V, A <: ElasticArray{V, M}, X <: Real, W <: Number, SW, SV} <: RationalInterpolation
+struct SymmetricBarycentricInterpolaton{M, V, A <: ElasticArray{V, M}, X <: Real, W <: Number, SW, SV} <: RationalInterpolation{M}
     nodes :: Vector{X}
     weights :: Vector{W}
     values :: A
