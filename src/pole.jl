@@ -130,7 +130,7 @@ function PoleInterpolation(F :: OddBarycentricInterpolation)
     )
 end
 
-function PoleInterpolation(F :: SymmetricBarycentricInterpolaton)
+function PoleInterpolation(F :: SymmetricBarycentricInterpolation)
     # get poles
     pol = poles(F)
 
@@ -161,3 +161,22 @@ end
 poles(f :: PoleInterpolation) = f.poles
 residues(f :: PoleInterpolation{1}) = f.residues
 residues(f :: PoleInterpolation) = (slice(f.residues, i) for i in axes(f.residues, ndims(f.residues)))
+
+function Base.write(parent :: Union{File, Group}, name :: AbstractString, f :: PoleInterpolation)
+    g = create_group(parent, name)
+    g["poles"] = f.poles
+    g["residues"] = f.residues
+    g["cnst"] = f.cnst
+
+    attributes(g)["__julia_type__"] = string(typeof(f))
+    return g
+end
+
+function Base.read(parent :: Union{File, Group}, name :: AbstractString, :: Type{<: PoleInterpolation})
+    g = parent[name]
+    return PoleInterpolation(
+        read(g, "poles"),
+        ElasticArray(read(g, "residues")),
+        read(g, "cnst")
+    )
+end

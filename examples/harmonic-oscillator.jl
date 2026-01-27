@@ -1,8 +1,9 @@
 using SelfconsistentBorn
 using LinearAlgebra
 using BenchmarkTools
+using HDF5
 
-n_fock = 16
+n_fock = 12
 H = Diagonal(0 : n_fock - 1)
 q = SymTridiagonal(zeros(n_fock), sqrt.((1 : n_fock - 1) * 0.5))
 
@@ -22,7 +23,12 @@ oqs = OQSystem(H, (bath,))
 # display(@benchmark SelfconsistentBorn.selfconsistency!($zeros(ComplexF64, 144, 144), $oqs, $Σ0, 1.23))
 
 Σ = simple_iteration(oqs, Σ0, 400.0, 1.0; aaa_iter = 40)
+Σ = simple_iteration(oqs, Σ, 400.0, 0.1; aaa_iter = 40)
 # println("Self-energy evaluation")
 # display(@benchmark SelfconsistentBorn.evaluate!($(zeros(ComplexF64, 144, 144)), $Σ, 1.0))
 # println("Selfconsistency evaluation")
 # display(@benchmark SelfconsistentBorn.selfconsistency!($zeros(ComplexF64, 144, 144), $oqs, $Σ, 1.23))
+
+f = h5open("test.h5", "w")
+f["self-energy"] = Σ
+close(f)

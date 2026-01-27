@@ -19,7 +19,7 @@ function block_structure!(blocks :: IntDisjointSet, f :: BarycentricInterpolatio
     end
 end
 
-function block_structure!(blocks :: IntDisjointSet, f :: SymmetricBarycentricInterpolaton{3}; ε :: Real = 1e-12)
+function block_structure!(blocks :: IntDisjointSet, f :: SymmetricBarycentricInterpolation{3}; ε :: Real = 1e-12)
     A = Matrix{eltype(f.values)}(undef, firstdims(f.values))
     @inbounds for n in axes(f.values, 3)
         block_structure!(blocks, slice(f.values, n); ε)
@@ -27,7 +27,7 @@ function block_structure!(blocks :: IntDisjointSet, f :: SymmetricBarycentricInt
         block_structure!(blocks, A)
     end
 end
-function Base.permute!(f :: Union{<: BarycentricInterpolation, SymmetricBarycentricInterpolaton}, perm :: Vector{Int})
+function Base.permute!(f :: Union{<: BarycentricInterpolation, SymmetricBarycentricInterpolation}, perm :: Vector{Int})
     tmp = Matrix{eltype(f.values)}(undef, firstdims(f.values))
     for i in axes(f.values, 3)
         tmp .= slice(f.values, i)[perm, perm]
@@ -59,7 +59,7 @@ function SelfEnergy(dim :: Int, η :: Real, Σ :: RationalInterpolation{3}, L ::
     end
     idxs = reduce(vcat, bl)
     permute!(Σ, idxs)
-    if Σ isa SymmetricBarycentricInterpolaton
+    if Σ isa SymmetricBarycentricInterpolation
         rmul!(lmul!(PermutationMap(idxs), Σ.sym_v.inner), PermutationMap(invperm(idxs)))
     end
     SelfEnergy(dim, η, Σ, L[idxs, idxs], idxs, qqq)
@@ -180,4 +180,45 @@ function simple_iteration(
     F! = let oqs = oqs, Σ = Σ; (y, ω) -> lmul!(1.0im, selfconsistency!(y, oqs, Σ, ω + im * η)) end
     F_int = _simple_iteration(oqs, F!, Ω_cutoff; aaa_iter, aaa_eps, aaa_split, nrm)
     return SelfEnergy(oqs.dim, η, F_int, oqs.L)
+end
+
+# struct SelfEnergy{T <: RationalInterpolation{3}, S <: Real, LIOU <: AbstractMatrix}
+#     dim :: Int
+#     shift :: S
+#     Σ :: T
+#     L :: LIOU
+#     idxs :: Vector{Int}
+#     blocks :: Vector{UnitRange{Int}}
+# end
+
+function Base.write(parent :: Union{File, Group}, name :: AbstractString, f :: SelfEnergy)
+    g = create_group(parent, name)
+    g["dim"] = f.dim
+    g["shift"] = f.shift
+    g["self-energy"] = f.Σ
+    g["liou"] = f.L
+    g["idxs"] = f.idxs
+
+    attributes(g)["__julia_type__"] = string(typeof(f))
+    return g
+end
+
+function Base.read(parent :: Union{File, Group}, name :: AbstractString, :: Type{<: SelfEnergy})
+    g = parent[name]
+    idxs = read(g, "idxs")
+    cur = 1
+    blocks = UnitRange{Int}[]
+    for i in eachindex(idxs[begin : end - 1])
+        if i == lastindex(idxs) || idxs[i + 1] < idxs[i]
+            push!(blocks, cur : i)
+            cur = i + 1
+        end
+    end
+    SelfEnergy(
+        read(g, "dim"),
+        read(g, "shift"),
+        read(g, "self-energy", SymmetricBarycentricInterpolation),
+        read(g, "liou"),
+        idxs, blocks
+    )
 end

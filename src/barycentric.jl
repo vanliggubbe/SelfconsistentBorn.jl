@@ -150,7 +150,7 @@ end
     F.values[i] * F.weights[i] * F.nodes[i] / (x ^ 2 - F.nodes[i] ^ 2) for i in F.perm
 ) / sum(F.weights[i] * x / (x ^ 2 - F.nodes[i] ^ 2) for i in F.perm)
 
-struct SymmetricBarycentricInterpolaton{M, V, A <: ElasticArray{V, M}, X <: Real, W <: Number, SW, SV} <: RationalInterpolation{M}
+struct SymmetricBarycentricInterpolation{M, V, A <: ElasticArray{V, M}, X <: Real, W <: Number, SW, SV} <: RationalInterpolation{M}
     nodes :: Vector{X}
     weights :: Vector{W}
     values :: A
@@ -159,7 +159,7 @@ struct SymmetricBarycentricInterpolaton{M, V, A <: ElasticArray{V, M}, X <: Real
     sym_v :: SV
     perm :: Vector{Int}
 
-    function SymmetricBarycentricInterpolaton(nodes, weights, values, sym_w, sym_v)
+    function SymmetricBarycentricInterpolation(nodes, weights, values, sym_w, sym_v)
         if length(nodes) != length(weights) || size(values)[end] != length(nodes)
             throw(DimensionMismatch("Arguments `nodes` and `weights` must have the same lengths"))
         end
@@ -186,8 +186,8 @@ function evaluate!(y, :: typeof(conj), x)
     y
 end
 
-evaluate!(__, :: SymmetricBarycentricInterpolaton{1}, _) = error("Not applicable")
-function evaluate!(y, F :: SymmetricBarycentricInterpolaton, x)
+evaluate!(__, :: SymmetricBarycentricInterpolation{1}, _) = error("Not applicable")
+function evaluate!(y, F :: SymmetricBarycentricInterpolation, x)
     if size(y) != firstdims(F.values)
         throw(DimensionMismatch("Output array dimension mismatch: expected $(size(F.values)[begin : end - 1]), got $(size(y))"))
     end
@@ -217,7 +217,7 @@ function evaluate!(y, F :: SymmetricBarycentricInterpolaton, x)
     end
 end
 
-function evaluate_diff!(y, F :: SymmetricBarycentricInterpolaton, x)
+function evaluate_diff!(y, F :: SymmetricBarycentricInterpolation, x)
     if size(y) != firstdims(F.values)
         throw(DimensionMismatch("Output array dimension mismatch: expected $(size(F.values)[begin : end - 1]), got $(size(y))"))
     end
@@ -248,7 +248,7 @@ function evaluate_diff!(y, F :: SymmetricBarycentricInterpolaton, x)
 end
 
 
-function (F :: SymmetricBarycentricInterpolaton)(x)
+function (F :: SymmetricBarycentricInterpolation)(x)
     sz = size(F.values)[begin : end - 1]
     T = divtype(
         divtype(promote_type(eltype(F.values), eltype(F.weights)), promote_type(eltype(F.nodes), typeof(x))),
@@ -258,7 +258,7 @@ function (F :: SymmetricBarycentricInterpolaton)(x)
     evaluate!(y, F, x)
 end
 
-function poles(F :: SymmetricBarycentricInterpolaton)
+function poles(F :: SymmetricBarycentricInterpolation)
     B = Matrix(1.0I, 1 + 2 * length(F.nodes), 1 + 2 * length(F.nodes))
     B[1, 1] = 0.0
     A = zeros(promote_type(eltype(F.weights), eltype(F.nodes)), size(B))
@@ -271,4 +271,45 @@ function poles(F :: SymmetricBarycentricInterpolaton)
         A[1 + i + length(F.weights), 1 + i + length(F.weights)] = -F.nodes[i]
     end
     return filter(isfinite, eigvals(A, B; sortby = imag))
+end
+
+function Base.write(parent :: Union{File, Group}, name :: AbstractString, f :: BarycentricInterpolation)
+    g = create_group(parent, name)
+    g["nodes"] = f.nodes
+    g["weights"] = f.weights
+    g["values"] = f.values
+
+    attributes(g)["__julia_type__"] = String(typeof(f))
+    return g
+end
+
+function Base.read(parent::Union{File, Group}, name :: AbstractString, ::Type{<: BarycentricInterpolation})
+    g = parent[name]
+    return BarycentricInterpolation(
+        read(g, "nodes"),
+        read(g, "weights"),
+        ElasticArray(read(g, "values"))
+    )
+end
+
+function Base.read(parent::Union{File, Group}, name :: AbstractString, :: Type{<: SymmetricBarycentricInterpolation})
+    g = parent[name]
+    return SymmetricBarycentricInterpolation(
+        read(g, "nodes"),
+        read(g, "weights"),
+        ElasticArray(read(g, "values")),
+        conj,
+        conj ∘ read(g, "sym_perm")
+    )
+end
+
+function Base.write(parent :: Union{File, Group}, name :: AbstractString, f :: SymmetricBarycentricInterpolation)
+    g = create_group(parent, name)
+    g["nodes"] = f.nodes
+    g["weights"] = f.weights
+    g["values"] = f.values
+    g["sym_perm"] = f.sym_v.inner.p
+
+    attributes(g)["__julia_type__"] = string(typeof(f))
+    return g
 end

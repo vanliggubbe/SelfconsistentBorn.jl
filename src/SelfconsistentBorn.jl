@@ -6,6 +6,7 @@ import LinearMaps: LinearMap, _unsafe_mul!, MulStyle, FiveArg, AdjointMap, Trans
 import FastLapackInterface: QRWYWs, LAPACK, LUWs
 import SpecialFunctions: digamma
 import DataStructures: IntDisjointSet, num_groups, find_root!
+import HDF5: File, Group, create_group, attributes, read_attribute
 
 export BosonicBath, OQSystem
 export green_0, self_energy_0, selfconsistency, simple_iteration, steady_state

@@ -59,7 +59,7 @@ function _simple_iteration(
     @inbounds for i in axes(fs′, 3)
         evaluate!(slice(fs′, i), sym_f, slice(fs, i))
     end
-    F_int = SymmetricBarycentricInterpolaton(ωs, ws, fs, conj, sym_f)
+    F_int = SymmetricBarycentricInterpolation(ωs, ws, fs, conj, sym_f)
 
     @assert F_int.nodes === ωs
     @assert F_int.weights === ws
