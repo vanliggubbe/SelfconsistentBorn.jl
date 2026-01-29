@@ -299,7 +299,7 @@ function Base.read(parent::Union{File, Group}, name :: AbstractString, :: Type{<
         read(g, "weights"),
         ElasticArray(read(g, "values")),
         conj,
-        conj ∘ read(g, "sym_perm")
+        conj ∘ PermutationMap(read(g, "sym_perm"))
     )
 end
 
