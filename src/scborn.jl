@@ -33,6 +33,14 @@ struct OQSystem{T <: AbstractMatrix, B, P}
     end
 end
 
+intermediate(Ω :: Real, a :: Real, b :: Real, n :: Int) = Ω * tan.(
+    LinRange(
+        angle((im * Ω - a) / (im * Ω + a)),
+        isfinite(b) ? angle((im * Ω - b) / (im * Ω + b)) : π,
+        n + 2
+    )[2 : end - 1] / 2.0
+)
+
 function _simple_iteration(
     oqs :: OQSystem,
     F :: Function,
@@ -68,8 +76,9 @@ function _simple_iteration(
     # points between support
     νs = reduce(
         vcat,
-        collect(LinRange(a, b, aaa_split(0) + 2))[2 : end - 1]
-        for (a, b) in zip([0.0;  ωs[1 : end - 1]], ωs)
+        intermediate(Ω_cutoff, a, b, aaa_split(0))
+        #LinRange(a, b, aaa_split(0) + 2))[2 : end - 1]
+        for (a, b) in zip([0.0;  ωs], [ωs; Inf])
     )
     gs = ElasticArray{ComplexF64}(undef, oqs.dim ^ 2, oqs.dim ^ 2, length(νs))
     @inbounds for i in eachindex(νs)
@@ -124,7 +133,7 @@ function _simple_iteration(
 
         # delete points
         left = maximum(ωs[ωs .< new_ω]; init = 0.0)
-        right = minimum(ωs[ωs .> new_ω])
+        right = minimum(ωs[ωs .> new_ω]; init = Inf)
         n_left = sum(left .< νs .< new_ω)
         n_right = sum(new_ω .< νs .< right)
         to_delete = reverse(collect(1 : length(νs))[left .< νs .< right])
@@ -139,8 +148,10 @@ function _simple_iteration(
 
         # add new points
         new_νs = [
-            collect(LinRange(left, new_ω, max(n_left, aaa_split(it)) + 2))[2 : end - 1];
-            collect(LinRange(new_ω, right, max(n_right, aaa_split(it)) + 2))[2 : end - 1]
+            intermediate(Ω_cutoff, left, new_ω, aaa_split(it));
+            intermediate(Ω_cutoff, new_ω, right, aaa_split(it));
+            #collect(LinRange(left, new_ω, max(n_left, aaa_split(it)) + 2))[2 : end - 1];
+            #collect(LinRange(new_ω, right, max(n_right, aaa_split(it)) + 2))[2 : end - 1]
         ]
         resize!(gs, (firstdims(gs)..., cur + length(new_νs)))
         idx = (cur + 1) : (cur + length(new_νs))

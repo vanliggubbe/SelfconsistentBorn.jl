@@ -72,3 +72,7 @@ function _unsafe_mul!(y, B :: TransposeMap{<: Any, <: Commutator}, x :: Abstract
     mul!(Y, X, transpose(A.A), A.sign * α, one(eltype(Y)))
     return y
 end
+
+norm_bound(A :: Commutator{T, M}) where {T, M <: AbstractMatrix} = 2.0 * first(svdvals(A.A))
+norm_bound(A :: AdjointMap{<: Any, <: Commutator}) = norm_bound(A.lmap)
+norm_bound(A :: TransposeMap{<: Any, <: Commutator}) = norm_bound(A.lmap)

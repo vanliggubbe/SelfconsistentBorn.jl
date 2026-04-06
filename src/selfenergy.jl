@@ -79,6 +79,93 @@ function self_energy_0(oqs :: OQSystem)
     return SelfEnergy(oqs.dim, 0.0, BarycentricInterpolation([0.0], [1.0], tmp), oqs.L)
 end
 
+function min_q(β :: AbstractVector{<: Real}, ζ :: AbstractVector{<: Real}, σ :: Real; n_ternary :: Integer = 30)
+    ζ′ = ζ .+ σ
+    X = sum(β ./ ζ′)
+    q_r = 1.0 - X / minimum(ζ′)
+    if q_r <= 0.0
+        return 0.0, false
+    end
+
+    # ternary search
+    q_l = 0.0
+    for _ in 1 : n_ternary
+        q_l′ = q_l + (q_r - q_l) / 3.0
+        q_r′ = q_r - (q_r - q_l) / 3.0
+        f_l′ = sum(β ./ (ζ′ .- X / (1 - q_l′)) .^ 2) - q_l′
+        f_r′ = sum(β ./ (ζ′ .- X / (1 - q_r′)) .^ 2) - q_r′
+        if f_l′ < f_r′
+            q_r = q_r′
+        else
+            q_l = q_l′
+        end
+    end
+    f_l = sum(β ./ (ζ′ .- X / (1 - q_l)) .^ 2) - q_l
+    f_r = sum(β ./ (ζ′ .- X / (1 - q_r)) .^ 2) - q_r
+    if f_l < f_r
+        return q_l, (f_l < 0.0)
+    else
+        return q_r, (f_r < 0.0)
+    end
+end
+
+# calculate domain that simple iteration converges
+function simple_iteration_domain(oqs :: OQSystem)
+    β = Float64[]
+    ζ = Float64[]
+    # get bounds for coupling operators
+    for b in oqs.baths
+        norm_c = norm_bound.(b.cpl_c)
+        norm_q = norm_bound.(b.cpl_q)
+        @inbounds for i in eachindex(b.K.poles)
+            push!(ζ, -imag(b.K.poles[i]))
+            rK = slice(b.K.residues, i)
+            tmp = 0.0
+            if i <= lastdim(b.R.residues)
+                rR = slice(b.R.residues, i)
+                for (j, a) in enumerate(norm_q)
+                    for (k, (right, right′)) in enumerate(zip(b.cpl_c, b.cpl_q))
+                        b′ = svdvals(right.A * rR[j, k] + right′.A * rK[j, k]) |> first
+                        b″ = svdvals(right.A * rR[j, k] - right′.A * rK[j, k]) |> first
+                        tmp += a * (b′ + b″)
+                    end
+                end
+            else
+                for (j, a) in enumerate(norm_q)
+                    for (k, b) in enumerate(norm_q)
+                        tmp += a * b * abs(rK[j, k])
+                    end
+                end
+            end
+            push!(β, tmp)
+        end
+    end
+    #display(collect(zip(β, ζ)))
+    σ_r = 0.0
+    while true
+        _, neg = min_q(β, ζ, σ_r)
+        if neg
+            break
+        end
+        σ_r = 2.0 * σ_r + 1.0
+    end
+    if iszero(σ_r)
+        return 0.0
+    end
+    σ_l = (σ_r - 1.0) / 2.0
+    # binary search
+    for _ in 1 : 20
+        σ = (σ_l + σ_r) / 2.0
+        _, neg = min_q(β, ζ, σ)
+        if neg
+            σ_r = σ
+        else
+            σ_l = σ
+        end
+    end
+    return σ_r
+end
+
 function selfconsistency!(y, oqs :: OQSystem, Σ :: SelfEnergy, ω)
     fill!(y, zero(eltype(y)))
     ws = LUWs(oqs.ginv)

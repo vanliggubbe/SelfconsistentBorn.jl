@@ -1,7 +1,8 @@
 # TODO rewrite better
 function aaa_mat_odd(
     a :: Real, b :: Real, f :: Function;
-    ε :: Real = 1e-9, n_iter :: Int = 40, split :: Int = 10, λ :: Real = 0.1, Λ :: Real = 1.0
+    weight :: Function = (_ -> 1.0),
+    ε :: Real = 1e-9, n_iter :: Int = 60, split :: Int = 10, λ :: Real = 0.1, Λ :: Real = 1.1
 )
     xs = collect(LinRange(a, b, split + 2))
     fs = flatten.(f.(xs))
@@ -13,7 +14,7 @@ function aaa_mat_odd(
     js = collect(1 : length(xs))
     local WS
     for i in 1 : n_iter
-        _, j = findmax(i -> norm(fs[i] - gs[i]), js)
+        _, j = findmax(i -> norm(fs[i] - gs[i]) * weight(xs[i]), js)
         jj = js[j]
         deleteat!(js, j)
         push!(XS, xs[jj])

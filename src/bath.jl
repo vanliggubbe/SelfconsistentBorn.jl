@@ -33,7 +33,8 @@ function retarded_to_keldysh(R :: PoleInterpolation{3}, T :: Real, Ω_cutoff :: 
     bose = aaa_mat_odd(
         0.125 * T, Ω_cutoff,
         let T = T; x -> (coth(x / (2.0 * T)) - 2.0 * T / x) end;
-        n_iter = 100, split = 20, ε = 1e-9
+        n_iter = 100, split = 20, ε = 1e-9,
+        weight = (x -> let A = R(x); norm(A - A'); end)
     ) |> PoleInterpolation
     cotanh(x) = bose(x) + 2.0 * T / x
 
