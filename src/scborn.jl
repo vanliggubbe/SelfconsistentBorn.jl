@@ -33,13 +33,7 @@ struct OQSystem{T <: AbstractMatrix, B, P}
     end
 end
 
-intermediate(Ω :: Real, a :: Real, b :: Real, n :: Int) = Ω * tan.(
-    LinRange(
-        angle((im * Ω - a) / (im * Ω + a)),
-        isfinite(b) ? angle((im * Ω - b) / (im * Ω + b)) : π,
-        n + 2
-    )[2 : end - 1] / 2.0
-)
+
 
 function _simple_iteration(
     oqs :: OQSystem,
@@ -148,8 +142,8 @@ function _simple_iteration(
 
         # add new points
         new_νs = [
-            intermediate(Ω_cutoff, left, new_ω, aaa_split(it));
-            intermediate(Ω_cutoff, new_ω, right, aaa_split(it));
+            intermediate(Ω_cutoff, left, new_ω, max(n_left, aaa_split(it)));
+            intermediate(Ω_cutoff, new_ω, right, max(n_right, aaa_split(it)));
             #collect(LinRange(left, new_ω, max(n_left, aaa_split(it)) + 2))[2 : end - 1];
             #collect(LinRange(new_ω, right, max(n_right, aaa_split(it)) + 2))[2 : end - 1]
         ]

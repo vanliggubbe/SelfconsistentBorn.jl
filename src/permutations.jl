@@ -92,6 +92,18 @@ function evaluate!(y, p :: ComposedFunction{typeof(conj), <: PermutationMap}, x 
     conj!(y)
 end
 
+function evaluate!(y, :: typeof(conj), x :: AbstractMatrix)
+    y .= x
+    conj!(y)
+end
+
+function evaluate!(y, :: typeof(conj), x :: AbstractMatrix, α :: Number, β :: Number)
+    conj!(y)
+    axpby!(conj(α), x, conj(β), y)
+    conj!(y)
+end
+
+
 """
     evaluate!(Y, P :: ComposedFunction{typeof(conj), <: PermutationMap}, X :: AbstractMatrix, α :: Number, β :: Number)
 

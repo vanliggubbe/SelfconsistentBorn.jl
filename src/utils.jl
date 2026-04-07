@@ -33,3 +33,15 @@ function block_structure!(block :: IntDisjointSet, a :: AbstractArray; ε :: Rea
         block_structure!(block, slice(a, i); ε)
     end
 end
+
+intermediate(Ω :: Real, a :: Real, b :: Real, n :: Int) = Ω * tan.(
+    LinRange(
+        angle((im * Ω - a) / (im * Ω + a)),
+        isfinite(b) ? angle((im * Ω - b) / (im * Ω + b)) : π,
+        n + 2
+    )[2 : end - 1] / 2.0
+)
+
+intermediate(a :: Complex, b :: Complex, n :: Int) = exp.(
+    LinRange(log(a), log(b), n + 2)[2 : end - 1]
+)

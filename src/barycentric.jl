@@ -258,19 +258,31 @@ function (F :: SymmetricBarycentricInterpolation)(x)
     evaluate!(y, F, x)
 end
 
+#=
+
+sum_j w_j / (x - x_j) + w̄_j / (x + x_j) =
+sum_j [w_j (x + x_j) + w̄_j (x - x_j)] / (x² - x_j²) = 
+sum_j (2 Re w_j x + 2i Im w_j x_j) / (x² - x_j²)
+=#
+
 function poles(F :: SymmetricBarycentricInterpolation)
     B = Matrix(1.0I, 1 + 2 * length(F.nodes), 1 + 2 * length(F.nodes))
-    B[1, 1] = 0.0
-    A = zeros(promote_type(eltype(F.weights), eltype(F.nodes)), size(B))
+    B[end, end] = 0.0
+    A = zeros(promote_type(real(eltype(F.weights)), eltype(F.nodes)), size(B))
     @inbounds for i in eachindex(F.weights, F.nodes)
-        A[1, 1 + i] = sqrt(abs(F.weights[i]))
-        A[1, 1 + i + length(F.weights)] = sqrt(abs(F.sym_w.(F.weights[i])))
-        A[1 + i, 1] = F.weights[i] / A[1, 1 + i]
-        A[1 + i + length(F.weights), 1] = F.sym_w.(F.weights[i]) / A[1, 1 + i + length(F.weights)]
-        A[1 + i, 1 + i] = F.nodes[i]
-        A[1 + i + length(F.weights), 1 + i + length(F.weights)] = -F.nodes[i]
+        A[2 * i - 1, 2 * i - 0] = F.nodes[i]
+        A[2 * i - 0, 2 * i - 1] = -F.nodes[i]
+        A[end, 2 * i - 1] = 1.0
+        A[2 * i - 1, end] = real(F.weights[i])
+        A[2 * i - 0, end] = imag(F.weights[i])
+        #A[1, 1 + i] = sqrt(abs(F.weights[i]))
+        #A[1, 1 + i + length(F.weights)] = sqrt(abs(F.sym_w.(F.weights[i])))
+        #A[1 + i, 1] = F.weights[i] / A[1, 1 + i]
+        #A[1 + i + length(F.weights), 1] = F.sym_w.(F.weights[i]) / A[1, 1 + i + length(F.weights)]
+        #A[1 + i, 1 + i] = F.nodes[i]
+        #A[1 + i + length(F.weights), 1 + i + length(F.weights)] = -F.nodes[i]
     end
-    return filter(isfinite, eigvals(A, B; sortby = imag))
+    return im * filter(isfinite, eigvals(A, B; sortby = real))
 end
 
 function Base.write(parent :: Union{File, Group}, name :: AbstractString, f :: BarycentricInterpolation)

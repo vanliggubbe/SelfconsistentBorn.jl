@@ -1,9 +1,10 @@
 name = "SelfconsistentBorn"
 uuid = "26c8d85c-21b4-456e-8614-f24489651b71"
-version = "0.0.1-DEV"
 authors = ["Vasilii Vadimov"]
+version = "0.0.1-DEV"
 
 [deps]
+ArgCheck = "dce04be8-c92d-5529-be00-80e4d2c0e197"
 DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
 ElasticArrays = "fdbdab4c-e67f-52f5-8c3f-e7b388dad3d4"
 FastLapackInterface = "29a986be-02c6-4525-aec4-84b980013641"
