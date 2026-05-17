@@ -63,26 +63,25 @@ end
 Creates a BosonicBath object from spectral density `J`, temperature `T`, and list of coupling operators `cpl`.
 Function `J` must return a square matrix, it's size must coincide with length of `cpl`.
 """
-function BosonicBath(cpl, J :: Function, T :: Real, Ω_cutoff :: Real, counterterm :: Bool = false; coth :: Symbol = :aaa)
-    R = let tmp = aaa_mat_odd(0.125 * T, Ω_cutoff, J)
-        PoleInterpolation(
-            OddBarycentricInterpolation(
-                tmp.nodes,
-                tmp.weights,
-                -1.0im * tmp.values
-            )
-        )
-    end
+function BosonicBath(cpl, J :: Function, T :: Real, Ω :: Real, counterterm :: Bool = false)
+    R = aaa_real_axis(Ω, x -> J(x) / x)
+    K = aaa_real_axis(Ω, x -> J(x) * coth(x / (2 * T)))
     retardize!(R)
+    retardize!(K)
+    for i in eachindex(R.poles)
+        slice(R.residues, i) .*= -im * R.poles[i]
+    end
+    K.residues .*= -im
     if counterterm
         R.cnst .-= R(0.0)
     end
-    local K
+    #=
     if coth == :aaa
         K = retarded_to_keldysh(R, T, Ω_cutoff)
     elseif coth == :digamma
         K = Keldysh(R, T)
     end
+    =#
     return BosonicBath(
         cpl,
         R, K

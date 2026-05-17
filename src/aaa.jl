@@ -70,7 +70,8 @@ end
 
 function aaa_real_axis(
     Ω :: Real,
-    f :: Function;
+    f :: Function,
+    sym = conj;
     aaa_iter :: Integer = 100,
     aaa_eps :: Real = 1e-9,
     aaa_split :: Function = (n -> 3)
@@ -82,7 +83,8 @@ function aaa_real_axis(
     # initialize support nodes
     zs = [Float64(π) / 2.0]
     fs = let q = f(Ω); ElasticArray(reshape(q, size(q)..., 1)) end
-    fs′ = conj(fs)
+    fs′ = similar(fs)
+    fs′ .= sym(fs)
     ws = [1.0 + 0.0im]
 
     # initialize intermediate points
@@ -120,16 +122,17 @@ function aaa_real_axis(
         if er < aaa_eps
             break
         end
-        println(it, " ", νs[j], " ", er)
+        println("!!!! ", it, " ", νs[j], " ", er)
 
         # add a new support point
         new_z = νs[j]
         push!(zs, new_z)
         append!(fs, slice(gs, j))
+
         # calculate value of symmetric point
         append!(fs′, similar(slice(fs′, 1)))
-        slice(fs′, size(fs′, 3)) .= slice(fs, size(fs, 3))
-        conj!(slice(fs′, size(fs′, 3)))
+        slice(fs′, size(fs′, 3)) .= sym(slice(fs, size(fs, 3)))
+        #conj!(slice(fs′, size(fs′, 3)))
 
         # delete points
         left = maximum(zs[zs .< new_z]; init = 0.0)
@@ -194,22 +197,36 @@ function aaa_real_axis(
     
     A = zeros(2 * length(zs) + 1, 2 * length(zs) + 1)
     B = zeros(2 * length(zs) + 1, 2 * length(zs) + 1)
+    qs = expm1.(-im * zs)
     for i in eachindex(zs, ws)
-        q = expm1(-im * zs[i])
-        A[2 * i - 1, 2 * i - 1] = real(q)
-        A[2 * i - 1, 2 * i - 0] = imag(q)
-        A[2 * i - 0, 2 * i - 1] = -imag(q)
-        A[2 * i - 0, 2 * i - 0] = real(q)
+        A[2 * i - 1, 2 * i - 1] = real(qs[i])
+        A[2 * i - 1, 2 * i - 0] = imag(qs[i])
+        A[2 * i - 0, 2 * i - 1] = -imag(qs[i])
+        A[2 * i - 0, 2 * i - 0] = real(qs[i])
         A[2 * i - 1, end] = 2 * real(ws[i])
         A[2 * i - 0, end] = -2 * imag(ws[i])
         A[end, 2 * i - 1] = 1.0
         B[2 * i - 1, 2 * i - 1] = 1.0
         B[2 * i - 0, 2 * i - 0] = 1.0
     end
-    
-    ωs = Ω * cot.(zs / 2.0)
-    cnst = -2.0 * real(sum(ws ./ expm1.(-im * zs)))
-    ws′ = 2.0im * Ω * ws ./ expm1.(-im * zs) .^ 2
-    return cnst, ωs, ws′, fs, filter(isfinite, eigvals(A, B))
+    z_pol = filter(isfinite, eigvals(A, B))
+    z_res = [
+        sum(
+            slice(fs, j) * ws[j] / (z - qs[j]) + slice(fs′, j) * conj(ws[j]) / (z - conj(qs[j]))
+            for j in eachindex(ws)
+        ) / sum(
+            -ws[j] / (z - qs[j]) ^ 2 - conj(ws[j]) / (z - conj(qs[j])) ^ 2
+            for j in eachindex(ws)
+        )
+        for z in z_pol
+    ]
+    ω_pol = -2im * Ω ./ z_pol .- im * Ω
+    ω_res = z_res ./ (1 ./ (ω_pol .+ im * Ω) - (ω_pol .- im * Ω) ./ (ω_pol .+ im * Ω) .^ 2)
+    return PoleInterpolation(ω_pol, ω_res, zero(slice(ω_res, 1)))
+    #return ω_pol, ω_res
+    #ωs = Ω * cot.(zs / 2.0)
+    #cnst = -2.0 * real(sum(ws ./ expm1.(-im * zs)))
+    #ws′ = 2.0im * Ω * ws ./ expm1.(-im * zs) .^ 2
+    #return cnst, ωs, ws′, fs, filter(isfinite, eigvals(A, B))
     #return fs, zs, ws, filter(isfinite, eigvals(A, B))
 end
