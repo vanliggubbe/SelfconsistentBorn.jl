@@ -64,8 +64,8 @@ Creates a BosonicBath object from spectral density `J`, temperature `T`, and lis
 Function `J` must return a square matrix, it's size must coincide with length of `cpl`.
 """
 function BosonicBath(cpl, J :: Function, T :: Real, Ω :: Real, counterterm :: Bool = false)
-    R = aaa_real_axis(Ω, x -> J(x) / x)
-    K = aaa_real_axis(Ω, x -> J(x) * coth(x / (2 * T)))
+    R = aaa_real_axis(PoleInterpolation, Ω, x -> J(x) / x)
+    K = aaa_real_axis(PoleInterpolation, Ω, x -> J(x) * coth(x / (2 * T)))
     retardize!(R)
     retardize!(K)
     for i in eachindex(R.poles)

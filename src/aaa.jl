@@ -84,7 +84,7 @@ function aaa_real_axis(
     zs = [Float64(π) / 2.0]
     fs = let q = f(Ω); ElasticArray(reshape(q, size(q)..., 1)) end
     fs′ = similar(fs)
-    fs′ .= sym(fs)
+    evaluate!(slice(fs′, 1), sym, slice(fs, 1))
     ws = [1.0 + 0.0im]
 
     # initialize intermediate points
@@ -96,9 +96,15 @@ function aaa_real_axis(
     )
     gs = ElasticArray{ComplexF64}(undef, size(fs)[1 : 2]..., length(νs))
     @inbounds for i in eachindex(νs)
-        slice(gs, i) .= f(Ω * cot(νs[i] / 2.0))
+        evaluate!(slice(gs, i), f, Ω * cot(νs[i] / 2.0))
     end
     tmp2 = zeros(ComplexF64, size(fs, 1), size(fs, 2))
+    
+    # preparing auxiliary arrays for tall and skinny QR
+    nmax = aaa_iter + length(zs)
+    R = zeros(Float64, 4 * nmax, 2 * nmax)                                                                  # right triangular matrix from QR
+    tmp = Matrix{Float64}(undef, 2 * prod(firstdims(fs)), 2 * nmax)                                         # each layer
+    wspace = QRWYWs(length(R) > length(tmp) ? R : tmp; blocksize = min(2 * nmax, 2 * prod(firstdims(fs))))  # LAPACK workspace for QR factorization
 
     for it in 1 : aaa_iter
         j = 0
@@ -122,7 +128,7 @@ function aaa_real_axis(
         if er < aaa_eps
             break
         end
-        println("!!!! ", it, " ", νs[j], " ", er)
+        @info "Iteration $(it): added node point $(νs[j]), error $(er)"
 
         # add a new support point
         new_z = νs[j]
@@ -131,7 +137,7 @@ function aaa_real_axis(
 
         # calculate value of symmetric point
         append!(fs′, similar(slice(fs′, 1)))
-        slice(fs′, size(fs′, 3)) .= sym(slice(fs, size(fs, 3)))
+        evaluate!(slice(fs′, lastdim(fs′)), sym, slice(fs, lastdim(fs)))
         #conj!(slice(fs′, size(fs′, 3)))
 
         # delete points
@@ -159,14 +165,22 @@ function aaa_real_axis(
         resize!(gs, (firstdims(gs)..., cur + length(new_νs)))
         idx = (cur + 1) : (cur + length(new_νs))
         @inbounds for (i, ν) in zip(idx, new_νs)
-            slice(gs, i) .= f(Ω * cot(ν / 2.0))
+            evaluate!(slice(gs, i), f, Ω * cot(ν / 2.0))
         end
         resize!(νs, cur + length(new_νs))
         νs[idx] .= new_νs
 
+        # do tall and skinny SVD
+        n = length(zs)                          # number of points, half number of columns
+        height_tmp = prod(firstdims(fs)) * 2
+        height = min(n * 2, height_tmp)         # height of a single layer
+
         # construct matrix
-        block_rows = size(fs, 1) * size(fs, 2) * 2
-        A = Matrix{Float64}(undef, length(νs) * block_rows, 2 * length(zs))
+        y_ij :: ComplexF64 = 0.0
+        z_ij :: ComplexF64 = 0.0
+        local f_i, f_j, f̄_j, dst
+        height_R :: Int = 0                 # height of current partial QR decomposition
+        cols = 1 : (2 * n)
         @inbounds for i in eachindex(νs)
             f_i = vec(slice(gs, i))
             @inbounds for j in eachindex(zs)
@@ -177,28 +191,61 @@ function aaa_real_axis(
                 z_ij = inv(cis(-νs[i]) - cis(zs[j]))
 
                 # real values
-                dst = reinterpret(ComplexF64, @view A[block_rows * (i - 1) .+ (1 : block_rows), 2 * j - 1])
+                dst = reinterpret(ComplexF64, @view tmp[1 : height_tmp, 2 * j - 1])
                 mul!(dst, y_ij, f_j)
                 axpy!(z_ij, f̄_j, dst)
                 axpy!(-y_ij - z_ij, f_i, dst)
                 # imag values
-                dst = reinterpret(ComplexF64, @view A[block_rows * (i - 1) .+ (1 : block_rows), 2 * j])
+                dst = reinterpret(ComplexF64, @view tmp[1 : height_tmp, 2 * j])
                 mul!(dst, im * y_ij, f_j)
                 axpy!(-im * z_ij, f̄_j, dst)
                 axpy!(-im * y_ij + im * z_ij, f_i, dst)
             end
+            # do QR factorization of the slice
+            LAPACK.geqrt!(wspace, view(tmp, 1 : height_tmp, cols))
+            triu!(@view tmp[1 : height, cols])
+            if i == 1
+                @views R[1 : height, cols] .= tmp[1 : height, cols]
+                height_R = height
+            else
+                @views R[(height_R + 1) : (height_R + height), cols] .= tmp[1 : height, cols]
+                height_R += height
+                LAPACK.geqrt!(wspace, @view R[1 : height_R, cols])
+                height_R = min(height_R, 2 * n)
+                triu!(@view R[1 : height_R, cols])
+            end
         end
-        _, _, V = svd!(A)
+        _, __, V = svd!(@view R[1 : height_R, cols])
         ws .= reinterpret(ComplexF64, @view V[1 : end - 2, end])
         push!(ws, V[end - 1] + im * V[end])
         #push!(F_int.perm, length(ws))
         #sortperm!(F_int.perm, abs.(ws))
     end
-    
-    A = zeros(2 * length(zs) + 1, 2 * length(zs) + 1)
-    B = zeros(2 * length(zs) + 1, 2 * length(zs) + 1)
     qs = expm1.(-im * zs)
-    for i in eachindex(zs, ws)
+    return qs, ws, fs, fs′
+    
+        #return ω_pol, ω_res
+    #ωs = Ω * cot.(zs / 2.0)
+    #cnst = -2.0 * real(sum(ws ./ expm1.(-im * zs)))
+    #ws′ = 2.0im * Ω * ws ./ expm1.(-im * zs) .^ 2
+    #return cnst, ωs, ws′, fs, filter(isfinite, eigvals(A, B))
+    #return fs, zs, ws, filter(isfinite, eigvals(A, B))
+end
+
+function aaa_real_axis(
+    :: Type{<: PoleInterpolation},
+    Ω :: Real,
+    f :: Function,
+    sym = conj;
+    aaa_iter :: Integer = 100,
+    aaa_eps :: Real = 1e-9,
+    aaa_split :: Function = (n -> 3)
+)
+    qs, ws, fs, fs′ = aaa_real_axis(Ω, f, sym; aaa_iter, aaa_eps, aaa_split)
+
+    A = zeros(2 * length(qs) + 1, 2 * length(qs) + 1)
+    B = zeros(2 * length(qs) + 1, 2 * length(qs) + 1)
+    for i in eachindex(qs, ws)
         A[2 * i - 1, 2 * i - 1] = real(qs[i])
         A[2 * i - 1, 2 * i - 0] = imag(qs[i])
         A[2 * i - 0, 2 * i - 1] = -imag(qs[i])
@@ -223,10 +270,17 @@ function aaa_real_axis(
     ω_pol = -2im * Ω ./ z_pol .- im * Ω
     ω_res = z_res ./ (1 ./ (ω_pol .+ im * Ω) - (ω_pol .- im * Ω) ./ (ω_pol .+ im * Ω) .^ 2)
     return PoleInterpolation(ω_pol, ω_res, zero(slice(ω_res, 1)))
-    #return ω_pol, ω_res
-    #ωs = Ω * cot.(zs / 2.0)
-    #cnst = -2.0 * real(sum(ws ./ expm1.(-im * zs)))
-    #ws′ = 2.0im * Ω * ws ./ expm1.(-im * zs) .^ 2
-    #return cnst, ωs, ws′, fs, filter(isfinite, eigvals(A, B))
-    #return fs, zs, ws, filter(isfinite, eigvals(A, B))
+end
+
+function aaa_real_axis(
+    :: Type{<: SymmetricBarycentricInterpolation},
+    Ω :: Real,
+    f :: Function,
+    sym = conj;
+    aaa_iter :: Integer = 100,
+    aaa_eps :: Real = 1e-9,
+    aaa_split :: Function = (n -> 3)
+)
+    qs, ws, fs, fs′ = aaa_real_axis(Ω, f, sym; aaa_iter, aaa_eps, aaa_split)
+    ωs = real(-2im * Ω ./ qs .- im * Ω)
 end

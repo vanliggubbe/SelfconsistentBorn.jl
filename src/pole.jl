@@ -32,7 +32,7 @@ PoleInterpolation(poles, residues :: AbstractVector{T}) where {T} = PoleInterpol
 
 evaluate!(_, F :: PoleInterpolation{1}, __) = error("Not applicable")
 
-function evaluate!(y, F :: PoleInterpolation, x)
+function evaluate!(y, F :: PoleInterpolation, x :: Number)
     y .= F.cnst
     @inbounds for i in eachindex(F.poles)
         axpy!(inv(x - F.poles[i]), slice(F.residues, i), y)
@@ -40,7 +40,7 @@ function evaluate!(y, F :: PoleInterpolation, x)
     return y
 end
 
-function evaluate!(y, F :: PoleInterpolation, x, α :: Number, β :: Number)
+function evaluate!(y, F :: PoleInterpolation, x :: Number, α :: Number, β :: Number)
     axpby!(α, F.cnst, β, y)
     @inbounds for i in eachindex(F.poles)
         axpy!(α / (x - F.poles[i]), slice(F.residues, i), y)

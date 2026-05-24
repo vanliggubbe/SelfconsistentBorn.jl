@@ -17,9 +17,9 @@ export simple_iteration_domain
 abstract type RationalInterpolation{N} <: Function end
 include("utils.jl")
 
-include("aaa.jl")
 include("barycentric.jl")
 include("pole.jl")
+include("aaa.jl")
 include("commutators.jl")
 include("permutations.jl")
 
