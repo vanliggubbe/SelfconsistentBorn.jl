@@ -38,6 +38,8 @@ end
 
 function Base.permute!(f :: PoleInterpolation, perm :: Vector{Int})
     tmp = Matrix{eltype(f.residues)}(undef, firstdims(f.residues))
+    tmp .= f.cnst[perm, perm]
+    f.cnst .= tmp
     for i in axes(f.residues, ndims(f.residues))
         tmp .= slice(f.residues, i)[perm, perm]
         slice(f.residues, i) .= tmp
@@ -75,8 +77,8 @@ function SelfEnergy(dim :: Int, η :: Real, Σ :: RationalInterpolation{3}, L ::
     SelfEnergy(dim, η, Σ, L[idxs, idxs], idxs, qqq)
 end
 
-evaluate!(y, Σ :: SelfEnergy, x) = lmul!(-1.0im, evaluate!(y, Σ.Σ, x - im * Σ.shift))
-evaluate!(y, Σ :: SelfEnergy, x, :: Val{true}) = lmul!(-1.0im, evaluate!(view(y, Σ.idxs, Σ.idxs), Σ.Σ, x - im * Σ.shift))
+evaluate!(y, Σ :: SelfEnergy, x) = evaluate!(y, Σ.Σ, x - im * Σ.shift)
+evaluate!(y, Σ :: SelfEnergy, x, :: Val{true}) = evaluate!(view(y, Σ.idxs, Σ.idxs), Σ.Σ, x - im * Σ.shift)
 
 function (f :: SelfEnergy)(x)
     y = Matrix{ComplexF64}(undef, f.dim ^ 2, f.dim ^ 2)
@@ -177,8 +179,22 @@ function simple_iteration_domain(oqs :: OQSystem)
     return σ_r
 end
 
+function counterterm!(y, oqs :: OQSystem)
+    # counterterm
+    for b in oqs.baths
+        @inbounds for (k, right) in enumerate(b.cpl_c)
+            mul!(oqs.tmp1, right, I(size(right, 1)))
+            @inbounds for (j, left) in enumerate(b.cpl_q)
+                mul!(y, left', oqs.tmp1, b.R.cnst[j, k], one(eltype(y)))
+            end
+        end    
+    end 
+    return y
+end
+
 function selfconsistency!(y, oqs :: OQSystem, Σ :: SelfEnergy, ω)
     fill!(y, zero(eltype(y)))
+    counterterm!(y, oqs)
     ws = LUWs(oqs.ginv)
     Is = [I(length(x)) for x in Σ.blocks]
     
@@ -212,15 +228,8 @@ function selfconsistency!(y, oqs :: OQSystem, Σ :: SelfEnergy, ω)
                 end
             end
         end
-        # counterterm
-        @inbounds for (k, right) in enumerate(b.cpl_c)
-            mul!(oqs.tmp1, right, I(size(right, 1)))
-            @inbounds for (j, left) in enumerate(b.cpl_q)
-                mul!(y, left', oqs.tmp1, b.R.cnst[j, k], one(eltype(y)))
-            end
-        end    
-    end
-    return y
+   end
+   return y
 end
 
 function selfconsistency(oqs :: OQSystem, Σ :: SelfEnergy, ω)
@@ -257,7 +266,8 @@ function simple_iteration(
     oqs :: OQSystem,
     Σ :: SelfEnergy,
     Ω :: Real,
-    η :: Real = 0.0;
+    η :: Real = simple_iteration_domain(oqs);
+    simple_iter :: Int = 5,
     aaa_iter :: Int = 20,
     aaa_eps :: Real = 1e-9,
     aaa_split :: Function = (n -> max(3, 20 - n)),
@@ -266,17 +276,22 @@ function simple_iteration(
 
     # construct mutating functions and symmetry operator
     pm = PermutationMap(copy(oqs.perm.p))
-    F!(y, ω) = lmul!(1.0im, selfconsistency!(y, oqs, Σ, ω + im * η))
-    sym!(y, x) = conj!(evaluate!(y, pm, x))
+    Σ′ = Σ
+    sym!(y, x) = lmul!(-1, conj!(evaluate!(y, pm, x)))
+    for _ in 1 : simple_iter
+        F!(y, ω) = selfconsistency!(y, oqs, Σ′, ω + im * η)
 
-    F_int = aaa_real_axis(
-        PoleInterpolation,
-        Ω, F!, sym!;
-        aaa_iter, aaa_eps, aaa_split,
-        fun_mut = true, fun_shape = (oqs.dim ^ 2, oqs.dim ^ 2), fun_type = ComplexF64,
-        sym_mut = true
-    )
-    return SelfEnergy(oqs.dim, η, F_int, oqs.L)
+        F_int = aaa_real_axis(
+            PoleInterpolation,
+            Ω, F!, sym!;
+            aaa_iter, aaa_eps = (aaa_eps * oqs.dim ^ 2), aaa_split,
+            fun_mut = true, fun_shape = (oqs.dim ^ 2, oqs.dim ^ 2), fun_type = ComplexF64,
+            sym_mut = true
+        )
+        counterterm!(F_int.cnst, oqs)
+        Σ′ = SelfEnergy(oqs.dim, η, F_int, oqs.L)
+    end
+    return Σ′
 end
 
 # struct SelfEnergy{T <: RationalInterpolation{3}, S <: Real, LIOU <: AbstractMatrix}

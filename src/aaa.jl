@@ -94,7 +94,6 @@ function aaa_real_axis(
     end
 
     # symmetric point
-    display(fs)
     fs′ = similar(fs)
     if sym_mut
         sym(slice(fs′, 1), slice(fs, 1))
@@ -149,7 +148,7 @@ function aaa_real_axis(
         if er < aaa_eps
             break
         end
-        @info "Iteration $(it): added node point $(νs[j]), error $(er)"
+        @info "Iteration $(it): added node point $(Ω * cot(νs[j] / 2.0)), error $(er)"
 
         # add a new support point
         new_z = νs[j]
@@ -302,7 +301,7 @@ function aaa_real_axis(
     ]
     ω_pol = -2im * Ω ./ z_pol .- im * Ω
     ω_res = z_res ./ (1 ./ (ω_pol .+ im * Ω) - (ω_pol .- im * Ω) ./ (ω_pol .+ im * Ω) .^ 2)
-    idxs = [norm(slice(ω_res, i)) > res_eps for i in axes(ω_res, ndims(ω_res))]
+    idxs = [norm(slice(ω_res, i)) > res_eps * sqrt(prod(firstdims(ω_res))) for i in axes(ω_res, ndims(ω_res))]
     return PoleInterpolation(ω_pol[idxs], slice(ω_res, idxs), zero(slice(ω_res, 1)))
 end
 
