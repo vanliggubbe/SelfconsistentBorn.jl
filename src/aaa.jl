@@ -71,7 +71,11 @@ end
 function aaa_real_axis(
     Ω :: Real,
     f :: Function,
-    sym = conj;
+    sym :: Function;
+    fun_mut :: Bool = false,
+    fun_shape :: Tuple{Vararg{Int}} = (),
+    fun_type :: Type{<: Number} = Float64,
+    sym_mut :: Bool = true,
     aaa_iter :: Integer = 100,
     aaa_eps :: Real = 1e-9,
     aaa_split :: Function = (n -> 3)
@@ -82,9 +86,23 @@ function aaa_real_axis(
 
     # initialize support nodes
     zs = [Float64(π) / 2.0]
-    fs = let q = f(Ω); ElasticArray(reshape(q, size(q)..., 1)) end
+    fs = fun_mut ? let q = ElasticArray{fun_type}(undef, fun_shape..., 1)
+        f(slice(q, 1), Ω)
+        q
+    end : let q = f(Ω);
+        ElasticArray(reshape(q, size(q)..., 1))
+    end
+
+    # symmetric point
+    display(fs)
     fs′ = similar(fs)
-    evaluate!(slice(fs′, 1), sym, slice(fs, 1))
+    if sym_mut
+        sym(slice(fs′, 1), slice(fs, 1))
+    else
+        slice(fs′, 1) .= slice(fs, 1)
+    end
+
+    # weight
     ws = [1.0 + 0.0im]
 
     # initialize intermediate points
@@ -94,11 +112,15 @@ function aaa_real_axis(
         #intermediate(a, b, aaa_split(0))
         for (a, b) in zip([0.0;  zs], [zs; Float64(π)])
     )
-    gs = ElasticArray{ComplexF64}(undef, size(fs)[1 : 2]..., length(νs))
+    gs = ElasticArray{ComplexF64}(undef, firstdims(fs)..., length(νs))
     @inbounds for i in eachindex(νs)
-        evaluate!(slice(gs, i), f, Ω * cot(νs[i] / 2.0))
+        if fun_mut
+            f(slice(gs, i), Ω * cot(νs[i] / 2.0))
+        else
+            slice(gs, i) .= f(Ω * cot(νs[i] / 2.0))
+        end
     end
-    tmp2 = zeros(ComplexF64, size(fs, 1), size(fs, 2))
+    tmp2 = zeros(ComplexF64, firstdims(fs)...)
     
     # preparing auxiliary arrays for tall and skinny QR
     nmax = aaa_iter + length(zs)
@@ -110,7 +132,6 @@ function aaa_real_axis(
         j = 0
         er = -Inf
         @inbounds for i in eachindex(νs)
-            #evaluate!(tmp2, F_int, νs[i])
             fill!(tmp2, zero(eltype(tmp2)))
             den = 0.0im
             for j in eachindex(zs)
@@ -137,8 +158,11 @@ function aaa_real_axis(
 
         # calculate value of symmetric point
         append!(fs′, similar(slice(fs′, 1)))
-        evaluate!(slice(fs′, lastdim(fs′)), sym, slice(fs, lastdim(fs)))
-        #conj!(slice(fs′, size(fs′, 3)))
+        if sym_mut
+            sym(slice(fs′, lastdim(fs′)), slice(fs, lastdim(fs)))
+        else
+            slice(fs′, lastdim(fs′)) .= sym(slice(fs, lastdim(fs)))
+        end
 
         # delete points
         left = maximum(zs[zs .< new_z]; init = 0.0)
@@ -165,7 +189,11 @@ function aaa_real_axis(
         resize!(gs, (firstdims(gs)..., cur + length(new_νs)))
         idx = (cur + 1) : (cur + length(new_νs))
         @inbounds for (i, ν) in zip(idx, new_νs)
-            evaluate!(slice(gs, i), f, Ω * cot(ν / 2.0))
+            if fun_mut
+                f(slice(gs, i), Ω * cot(ν / 2.0))
+            else
+                slice(gs, i) .= f(Ω * cot(ν / 2.0))
+            end
         end
         resize!(νs, cur + length(new_νs))
         νs[idx] .= new_νs
@@ -236,12 +264,17 @@ function aaa_real_axis(
     :: Type{<: PoleInterpolation},
     Ω :: Real,
     f :: Function,
-    sym = conj;
+    sym :: Function = conj;
+    fun_mut :: Bool = false,
+    fun_shape :: Tuple{Vararg{Int}} = (),
+    fun_type :: Type{<: Number} = Float64,
+    sym_mut :: Bool = false,
     aaa_iter :: Integer = 100,
     aaa_eps :: Real = 1e-9,
-    aaa_split :: Function = (n -> 3)
+    aaa_split :: Function = (n -> 3),
+    res_eps :: Real = 1e-9
 )
-    qs, ws, fs, fs′ = aaa_real_axis(Ω, f, sym; aaa_iter, aaa_eps, aaa_split)
+    qs, ws, fs, fs′ = aaa_real_axis(Ω, f, sym; aaa_iter, aaa_eps, aaa_split, fun_mut, fun_shape, fun_type, sym_mut)
 
     A = zeros(2 * length(qs) + 1, 2 * length(qs) + 1)
     B = zeros(2 * length(qs) + 1, 2 * length(qs) + 1)
@@ -269,18 +302,26 @@ function aaa_real_axis(
     ]
     ω_pol = -2im * Ω ./ z_pol .- im * Ω
     ω_res = z_res ./ (1 ./ (ω_pol .+ im * Ω) - (ω_pol .- im * Ω) ./ (ω_pol .+ im * Ω) .^ 2)
-    return PoleInterpolation(ω_pol, ω_res, zero(slice(ω_res, 1)))
+    idxs = [norm(slice(ω_res, i)) > res_eps for i in axes(ω_res, ndims(ω_res))]
+    return PoleInterpolation(ω_pol[idxs], slice(ω_res, idxs), zero(slice(ω_res, 1)))
 end
 
+#=
 function aaa_real_axis(
     :: Type{<: SymmetricBarycentricInterpolation},
     Ω :: Real,
     f :: Function,
-    sym = conj;
+    sym :: Function = conj;
+    fun_mut :: Bool = false,
+    fun_shape :: Tuple{Vararg{Int}} = (),
+    fun_type :: Type{<: Number} = Float64,
+    sym_mut :: Bool = false,
     aaa_iter :: Integer = 100,
     aaa_eps :: Real = 1e-9,
     aaa_split :: Function = (n -> 3)
 )
-    qs, ws, fs, fs′ = aaa_real_axis(Ω, f, sym; aaa_iter, aaa_eps, aaa_split)
+    qs, ws, fs, fs′ = aaa_real_axis(Ω, f, sym; aaa_iter, aaa_eps, aaa_split, fun_mut, fun_shape, fun_type, sym_mut)
     ωs = real(-2im * Ω ./ qs .- im * Ω)
+    ws′ = 
 end
+=#

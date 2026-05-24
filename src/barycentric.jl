@@ -36,7 +36,7 @@ end
 
 evaluate!(_, :: BarycentricInterpolation{1}, __) = error("Not applicable")
 
-function evaluate!(y, F :: BarycentricInterpolation, x)
+function evaluate!(y, F :: BarycentricInterpolation, x :: Number)
     if size(y) != size(F.values)[begin : end - 1]
         throw(DimensionMismatch("Output array dimension mismatch: expected $(size(F.values)[begin : end - 1]), got $(size(y))"))
     end

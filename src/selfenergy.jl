@@ -9,7 +9,7 @@ end
 
 
 function block_structure!(blocks :: IntDisjointSet, f :: PoleInterpolation{3}; ε :: Real = 1e-12)
-    block_structure!(block, f.cnst; ε)
+    block_structure!(blocks, f.cnst; ε)
     block_structure!(blocks, f.residues; ε)
 end
 
@@ -27,6 +27,7 @@ function block_structure!(blocks :: IntDisjointSet, f :: SymmetricBarycentricInt
         block_structure!(blocks, A)
     end
 end
+
 function Base.permute!(f :: Union{<: BarycentricInterpolation, SymmetricBarycentricInterpolation}, perm :: Vector{Int})
     tmp = Matrix{eltype(f.values)}(undef, firstdims(f.values))
     for i in axes(f.values, 3)
@@ -34,6 +35,15 @@ function Base.permute!(f :: Union{<: BarycentricInterpolation, SymmetricBarycent
         slice(f.values, i) .= tmp
     end
 end
+
+function Base.permute!(f :: PoleInterpolation, perm :: Vector{Int})
+    tmp = Matrix{eltype(f.residues)}(undef, firstdims(f.residues))
+    for i in axes(f.residues, ndims(f.residues))
+        tmp .= slice(f.residues, i)[perm, perm]
+        slice(f.residues, i) .= tmp
+    end
+end
+
 
 function SelfEnergy(dim :: Int, η :: Real, Σ :: RationalInterpolation{3}, L :: AbstractMatrix; ε :: Real = 1e-12)
     # identify matrix blocks
@@ -67,6 +77,7 @@ end
 
 evaluate!(y, Σ :: SelfEnergy, x) = lmul!(-1.0im, evaluate!(y, Σ.Σ, x - im * Σ.shift))
 evaluate!(y, Σ :: SelfEnergy, x, :: Val{true}) = lmul!(-1.0im, evaluate!(view(y, Σ.idxs, Σ.idxs), Σ.Σ, x - im * Σ.shift))
+
 function (f :: SelfEnergy)(x)
     y = Matrix{ComplexF64}(undef, f.dim ^ 2, f.dim ^ 2)
     evaluate!(y, f, x, Val{true}())
@@ -117,30 +128,30 @@ function simple_iteration_domain(oqs :: OQSystem)
     for b in oqs.baths
         norm_c = norm_bound.(b.cpl_c)
         norm_q = norm_bound.(b.cpl_q)
+        @inbounds for i in eachindex(b.R.poles)
+            push!(ζ, -imag(b.R.poles[i]))
+            rR = slice(b.R.residues, i)
+            tmp = 0.0
+            for (j, a) in enumerate(norm_c)
+                for (k, b) in enumerate(norm_q)
+                    tmp += a * b * abs(rR[j, k])
+                end
+            end
+            push!(β, tmp)
+        end
         @inbounds for i in eachindex(b.K.poles)
             push!(ζ, -imag(b.K.poles[i]))
             rK = slice(b.K.residues, i)
             tmp = 0.0
-            if i <= lastdim(b.R.residues)
-                rR = slice(b.R.residues, i)
-                for (j, a) in enumerate(norm_q)
-                    for (k, (right, right′)) in enumerate(zip(b.cpl_c, b.cpl_q))
-                        b′ = svdvals(right.A * rR[j, k] + right′.A * rK[j, k]) |> first
-                        b″ = svdvals(right.A * rR[j, k] - right′.A * rK[j, k]) |> first
-                        tmp += a * (b′ + b″)
-                    end
-                end
-            else
-                for (j, a) in enumerate(norm_q)
-                    for (k, b) in enumerate(norm_q)
-                        tmp += a * b * abs(rK[j, k])
-                    end
+            for (j, a) in enumerate(norm_q)
+                for (k, b) in enumerate(norm_q)
+                    tmp += a * b * abs(rK[j, k])
                 end
             end
             push!(β, tmp)
         end
     end
-    #display(collect(zip(β, ζ)))
+
     σ_r = 0.0
     while true
         _, neg = min_q(β, ζ, σ_r)
@@ -172,43 +183,32 @@ function selfconsistency!(y, oqs :: OQSystem, Σ :: SelfEnergy, ω)
     Is = [I(length(x)) for x in Σ.blocks]
     
     for b in oqs.baths
-        local rR, rK
-        #lefts = [Matrix(left') for left in]
-        @inbounds for (i, p) in enumerate(b.K.poles)
-            if i <= lastdim(b.R.residues)
-                rR = slice(b.R.residues, i)
-            end
-            rK = slice(b.K.residues, i)
-            evaluate!(oqs.ginv, Σ, ω - p)
-            oqs.ginv .+= Σ.L
-            @inbounds for j in axes(oqs.ginv, 1)
-                oqs.ginv[j, j] += (p - ω)
-            end
-            # lmul!(-1.0, ginv)
-            # use block structure of Σ too speed up inverse
-            fill!(oqs.tmp1, zero(eltype(oqs.tmp1)))
-            for (II, rg) in zip(Is, Σ.blocks)
-                if length(rg) > 1
-                    F = LU(LAPACK.getrf!(ws, view(oqs.ginv, rg, rg))...)
-                    ldiv!(view(oqs.tmp1, rg, rg), F, II)
-                else
-                    oqs.tmp1[first(rg), first(rg)] = inv(oqs.ginv[first(rg), first(rg)])
+        # calculate separately retarded and Keldysh poles
+        for (S, cpl_l, cpl_r) in [(b.R, b.cpl_c, b.cpl_q), (b.K, b.cpl_q, b.cpl_q)]
+            @inbounds for (i, p) in enumerate(S.poles)
+                rS = slice(S.residues, i)
+                evaluate!(oqs.ginv, Σ, ω - p)
+                oqs.ginv .+= Σ.L
+                @inbounds for j in axes(oqs.ginv, 1)
+                    oqs.ginv[j, j] += (p - ω)
                 end
-            end
-            @views oqs.tmp2[Σ.idxs, Σ.idxs] .= oqs.tmp1
-            # F = LU(LAPACK.getrf!(ws, oqs.ginv)...)
-            # ldiv!(oqs.tmp2, F, I(oqs.dim ^ 2))
-            
-            @inbounds for (j, left) in enumerate(b.cpl_q)
-                #mul!(tmp, left', -one(T))
-                #rdiv!(tmp, F)
-                mul!(oqs.tmp1, left', oqs.tmp2)
-                @inbounds for (k, (right, right′)) in enumerate(zip(b.cpl_c, b.cpl_q))
-                    # minus sign because ginv has a wrong sign
-                    if i <= lastdim(b.R.residues)
-                        mul!(y, oqs.tmp1, right, -rR[j, k], one(eltype(y)))
+                fill!(oqs.tmp1, zero(eltype(oqs.tmp1)))
+                for (II, rg) in zip(Is, Σ.blocks)
+                    if length(rg) > 1
+                        F = LU(LAPACK.getrf!(ws, view(oqs.ginv, rg, rg))...)
+                        ldiv!(view(oqs.tmp1, rg, rg), F, II)
+                    else
+                        oqs.tmp1[first(rg), first(rg)] = inv(oqs.ginv[first(rg), first(rg)])
                     end
-                    mul!(y, oqs.tmp1, right′, -rK[j, k], one(eltype(y)))
+                end
+                @views oqs.tmp2[Σ.idxs, Σ.idxs] .= oqs.tmp1
+
+                @inbounds for (j, left) in enumerate(cpl_l)
+                    mul!(oqs.tmp1, left', oqs.tmp2)
+                    @inbounds for (k, right) in enumerate(cpl_r)
+                        # minus sign because ginv has a wrong sign
+                        mul!(y, oqs.tmp1, right, -rS[j, k], one(eltype(y)))
+                    end
                 end
             end
         end
@@ -256,16 +256,26 @@ Keyword arguments:
 function simple_iteration(
     oqs :: OQSystem,
     Σ :: SelfEnergy,
-    Ω_cutoff :: Real,
+    Ω :: Real,
     η :: Real = 0.0;
     aaa_iter :: Int = 20,
     aaa_eps :: Real = 1e-9,
     aaa_split :: Function = (n -> max(3, 20 - n)),
-    nrm :: Function = norm
 )
-    @assert (η >= 0.0)
-    F! = let oqs = oqs, Σ = Σ; (y, ω) -> lmul!(1.0im, selfconsistency!(y, oqs, Σ, ω + im * η)) end
-    F_int = _simple_iteration(oqs, F!, Ω_cutoff; aaa_iter, aaa_eps, aaa_split, nrm)
+    @argcheck (η >= 0.0)
+
+    # construct mutating functions and symmetry operator
+    pm = PermutationMap(copy(oqs.perm.p))
+    F!(y, ω) = lmul!(1.0im, selfconsistency!(y, oqs, Σ, ω + im * η))
+    sym!(y, x) = conj!(evaluate!(y, pm, x))
+
+    F_int = aaa_real_axis(
+        PoleInterpolation,
+        Ω, F!, sym!;
+        aaa_iter, aaa_eps, aaa_split,
+        fun_mut = true, fun_shape = (oqs.dim ^ 2, oqs.dim ^ 2), fun_type = ComplexF64,
+        sym_mut = true
+    )
     return SelfEnergy(oqs.dim, η, F_int, oqs.L)
 end
 
