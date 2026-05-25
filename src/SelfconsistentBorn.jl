@@ -8,14 +8,16 @@ import SpecialFunctions: digamma
 import DataStructures: IntDisjointSet, num_groups, find_root!
 import HDF5: File, Group, create_group, attributes, read_attribute
 import ArgCheck: @argcheck
+import SimpleTraits: @traitdef, @traitimpl, @traitfn
 
 export BosonicBath, OQSystem
-export green_0, self_energy_0, selfconsistency, simple_iteration, steady_state
+export selfconsistency, simple_iteration!, steady_state, selfconsistency_check, dim, self_energy
 export Commutator
 export simple_iteration_domain
 
-abstract type RationalInterpolation{N} <: Function end
 include("utils.jl")
+
+abstract type RationalInterpolation{N} <: Function end
 
 include("barycentric.jl")
 include("pole.jl")

@@ -102,7 +102,7 @@ function aaa_real_axis(
     end
 
     # weight
-    ws = [1.0 + 0.0im]
+    ws = [one(ComplexF64)]
 
     # initialize intermediate points
     νs = reduce(
@@ -305,7 +305,6 @@ function aaa_real_axis(
     return PoleInterpolation(ω_pol[idxs], slice(ω_res, idxs), zero(slice(ω_res, 1)))
 end
 
-#=
 function aaa_real_axis(
     :: Type{<: SymmetricBarycentricInterpolation},
     Ω :: Real,
@@ -321,6 +320,19 @@ function aaa_real_axis(
 )
     qs, ws, fs, fs′ = aaa_real_axis(Ω, f, sym; aaa_iter, aaa_eps, aaa_split, fun_mut, fun_shape, fun_type, sym_mut)
     ωs = real(-2im * Ω ./ qs .- im * Ω)
-    ws′ = 
+    ws_new = [
+        ws .* (ωs .+ im * Ω) .^ 2 / (2im * Ω);
+        2 * real(sum(ws .* (ωs .+ im * Ω) / (2im * Ω)))
+    ]
+    append!(
+        fs,
+        sum(
+            (
+                slice(fs, i) * ws[i] * (ωs[i] + im * Ω) +
+                slice(fs′, i) * conj(ws[i]) * (-ωs[i] + im * Ω)
+            ) / (2im * Ω)
+            for i in eachindex(ws)
+        )
+    )
+    return ωs, ws_new, fs
 end
-=#

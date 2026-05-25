@@ -46,5 +46,7 @@ intermediate(a :: Complex, b :: Complex, n :: Int) = exp.(
     LinRange(log(a), log(b), n + 2)[2 : end - 1]
 )
 
-evaluate!(y, f :: Function, x :: Number) = (y .= f(x))
-evaluate!(y, f :: Function, x :: AbstractArray) = map!(f, y, x)
+#evaluate!(y, f :: Function, x :: Number) = (y .= f(x))
+#evaluate!(y, f :: Function, x :: AbstractArray) = map!(f, y, x)
+
+minusconj(x) = -conj(x)
