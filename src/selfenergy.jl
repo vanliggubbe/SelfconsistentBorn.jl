@@ -200,7 +200,7 @@ function selfconsistency!(y, oqs :: OQSystem, Σ :: SelfEnergy, ω)
     
     for b in oqs.baths
         # calculate separately retarded and Keldysh poles
-        for (S, cpl_l, cpl_r) in [(b.R, b.cpl_c, b.cpl_q), (b.K, b.cpl_q, b.cpl_q)]
+        for (S, cpl_l, cpl_r) in [(b.R, b.cpl_q, b.cpl_c), (b.K, b.cpl_q, b.cpl_q)]
             @inbounds for (i, p) in enumerate(S.poles)
                 rS = slice(S.residues, i)
                 evaluate!(oqs.ginv, Σ, ω - p)
