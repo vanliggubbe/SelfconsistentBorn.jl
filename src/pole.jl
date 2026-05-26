@@ -162,6 +162,7 @@ poles(f :: PoleInterpolation) = f.poles
 residues(f :: PoleInterpolation{1}) = f.residues
 residues(f :: PoleInterpolation) = (slice(f.residues, i) for i in axes(f.residues, ndims(f.residues)))
 
+#=
 function Base.write(parent :: Union{File, Group}, name :: AbstractString, f :: PoleInterpolation)
     g = create_group(parent, name)
     g["poles"] = f.poles
@@ -180,3 +181,4 @@ function Base.read(parent :: Union{File, Group}, name :: AbstractString, :: Type
         read(g, "cnst")
     )
 end
+=#

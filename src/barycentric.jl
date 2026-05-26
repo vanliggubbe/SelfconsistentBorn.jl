@@ -290,6 +290,7 @@ function poles(F :: SymmetricBarycentricInterpolation)
     return im * filter(isfinite, eigvals(A, B; sortby = real))
 end
 
+#=
 function Base.write(parent :: Union{File, Group}, name :: AbstractString, f :: BarycentricInterpolation)
     g = create_group(parent, name)
     g["nodes"] = f.nodes
@@ -330,3 +331,4 @@ function Base.write(parent :: Union{File, Group}, name :: AbstractString, f :: S
     attributes(g)["__julia_type__"] = string(typeof(f))
     return g
 end
+=#

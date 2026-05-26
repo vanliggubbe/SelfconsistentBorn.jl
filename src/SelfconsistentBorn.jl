@@ -1,14 +1,13 @@
 module SelfconsistentBorn
 
-import LinearAlgebra: I, norm, tr, axpy!, axpby!, adjoint!, svd!, Diagonal, eigvals, lmul!, rmul!, mul!, eigen, ldiv!, QRCompactWY, tr, LU, rdiv!, svd, ishermitian, issymmetric, triu!, svdvals
+import LinearAlgebra: I, norm, tr, axpy!, axpby!, adjoint!, svd!, Diagonal, eigvals, lmul!, rmul!, mul!, eigen, ldiv!, QRCompactWY, tr, LU, rdiv!, svd, ishermitian, issymmetric, triu!, svdvals, Hermitian
 import ElasticArrays: ElasticArray, ElasticMatrix, ElasticVector
 import LinearMaps: LinearMap, _unsafe_mul!, MulStyle, FiveArg, AdjointMap, TransposeMap
 import FastLapackInterface: QRWYWs, LAPACK, LUWs
-import SpecialFunctions: digamma
 import DataStructures: IntDisjointSet, num_groups, find_root!
-import HDF5: File, Group, create_group, attributes, read_attribute
+#import HDF5: File, Group, create_group, attributes, read_attribute
 import ArgCheck: @argcheck
-import SimpleTraits: @traitdef, @traitimpl, @traitfn
+#import SimpleTraits: @traitdef, @traitimpl, @traitfn
 
 export BosonicBath, OQSystem
 export selfconsistency, simple_iteration!, steady_state, selfconsistency_check, dim, self_energy

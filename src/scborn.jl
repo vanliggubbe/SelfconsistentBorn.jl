@@ -2,10 +2,14 @@ struct SelfEnergySymmetry{P <: PermutationMap} <: Function
     pm :: P
 end
 
+# y := s(x)
 evaluate!(y, s :: SelfEnergySymmetry, x) = lmul!(-one(eltype(y)), conj!(evaluate!(y, s.pm, x)))
 # y := s(x) * a + b * y
 evaluate!(y, s :: SelfEnergySymmetry, x, a, b) = lmul!(-one(eltype(y)), conj!(evaluate!(conj!(y), s.pm, x, conj(a), -conj(b))))
+
+# f(x)
 (f :: SelfEnergySymmetry)(x) = (evaluate!(similar(x), f, x))
+# y := f(x)
 (f :: SelfEnergySymmetry)(y, x) = evaluate!(y, f, x)
 
 struct OQSystem{
@@ -91,10 +95,20 @@ struct OQSystem{
     end
 end
 
+"""
+    dim(oqs :: OQSystem)
+
+Returns dimension of the Hilbert space of the open quantum system `oqs`.
+"""
 @inline dim(oqs :: OQSystem) = oqs.dim
 
 self_energy!(y, oqs :: OQSystem, x) = evaluate!(y, oqs.selfenergy, x)
 
+"""
+    self_energy(oqs :: OQSystem, ω)
+
+Evaluates selfconsistent Born self-energy at frequency `ω`.
+"""
 function self_energy(oqs :: OQSystem, x)
     y = Matrix{ComplexF64}(undef, dim(oqs) ^ 2, dim(oqs) ^ 2)
     self_energy!(y, oqs, x)
@@ -131,7 +145,11 @@ function _min_q(β :: AbstractVector{<: Real}, ζ :: AbstractVector{<: Real}, σ
     end
 end
 
-# calculate domain that simple iteration converges
+"""
+    simple_iteration_domain(oqs :: OQSystem)
+
+Returns the imaginary displacement at which the simple iteration method converges with guarantee.
+"""
 function simple_iteration_domain(oqs :: OQSystem)
     β = Float64[]
     ζ = Float64[]
@@ -249,11 +267,22 @@ function selfconsistency!(
    return y
 end
 
+"""
+    selfconsistency(oqs :: OQSystem, ω)
+
+Evaluate self-energy at frequency `ω` using selfconsistency equation.
+"""
 function selfconsistency(oqs :: OQSystem, ω)
     y = Matrix{ComplexF64}(undef, dim(oqs) ^ 2, dim(oqs) ^ 2)
     selfconsistency!(y, oqs, ω)
 end
 
+"""
+    selfconsistency_check(oqs :: OQSystem, ω; nrm = LinearAlgebra.norm)
+
+Returns distance between self-energy and selfconsistency equation for the self-energy at frequency `ω`.
+Keyword argument `nrm` specifies norm for calculating the distance.
+"""
 selfconsistency_check(oqs :: OQSystem, ω; nrm = norm) = nrm(self_energy(oqs, ω) - selfconsistency(oqs, ω))
 
 """
@@ -265,7 +294,7 @@ function steady_state(oqs :: OQSystem)
     _, _, V = svd(oqs.liou + self_energy(oqs, 0.0))
     ret = reshape(V[:, end], dim(oqs), dim(oqs))
     ret ./= tr(ret)
-    return ret
+    return Hermitian(ret)
 end
 
 """
