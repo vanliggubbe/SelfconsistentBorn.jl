@@ -75,12 +75,12 @@ function aaa_real_axis(
     fun_mut :: Bool = false,
     fun_shape :: Tuple{Vararg{Int}} = (),
     fun_type :: Type{<: Number} = Float64,
-    sym_mut :: Bool = true,
+    sym_mut :: Bool = false,
     aaa_iter :: Integer = 100,
     aaa_eps :: Real = 1e-9,
     aaa_split :: Function = (n -> 3)
 )
-    @argcheck Ω > 0.0
+    #@argcheck Ω > 0.0
     @argcheck aaa_iter > 0
     @argcheck aaa_eps > 0.0
 
@@ -289,6 +289,7 @@ function aaa_real_axis(
         B[2 * i - 0, 2 * i - 0] = 1.0
     end
     z_pol = filter(isfinite, eigvals(A, B))
+    #display(z_pol)
     z_res = [
         sum(
             slice(fs, j) * ws[j] / (z - qs[j]) + slice(fs′, j) * conj(ws[j]) / (z - conj(qs[j]))
@@ -301,7 +302,7 @@ function aaa_real_axis(
     ]
     ω_pol = -2im * Ω ./ z_pol .- im * Ω
     ω_res = z_res ./ (1 ./ (ω_pol .+ im * Ω) - (ω_pol .- im * Ω) ./ (ω_pol .+ im * Ω) .^ 2)
-    idxs = [norm(slice(ω_res, i)) > res_eps * sqrt(prod(firstdims(ω_res))) for i in axes(ω_res, ndims(ω_res))]
+    idxs = [norm(slice(ω_res, i)) / abs(imag(ω_pol[i])) > res_eps * sqrt(prod(firstdims(ω_res))) for i in axes(ω_res, ndims(ω_res))]
     return PoleInterpolation(ω_pol[idxs], slice(ω_res, idxs), zero(slice(ω_res, 1)))
 end
 

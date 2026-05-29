@@ -54,8 +54,8 @@ struct OQSystem{
         for b in baths
             for cpl_q in b.cpl_q
                 for (cpl_c′, cpl_q′) in zip(b.cpl_c, b.cpl_q)
-                    block_structure!(blocks, Matrix(cpl_q * cpl_c′); ε)
-                    block_structure!(blocks, Matrix(cpl_q * cpl_q′); ε)
+                    block_structure!(blocks, Matrix(cpl_q' * cpl_c′); ε)
+                    block_structure!(blocks, Matrix(cpl_q' * cpl_q′); ε)
                 end
             end
         end
@@ -235,9 +235,10 @@ function selfconsistency!(
     
     for b in oqs.baths
         # calculate separately retarded and Keldysh poles
-        for (S, cpl_l, cpl_r) in [(b.R, b.cpl_q, b.cpl_c), (b.K, b.cpl_q, b.cpl_q)]
-            @inbounds for (i, p) in enumerate(S.poles)
-                rS = slice(S.residues, i)
+        #for (S, cpl_l, cpl_r) in [(b.R, b.cpl_q, b.cpl_c), (b.K, b.cpl_q, b.cpl_q)]
+            @inbounds for (i, p) in enumerate(b.R.poles)
+                rR = slice(b.R.residues, i)
+                rK = slice(b.K.residues, i)
                 @views self_energy!(ginv[oqs.idxs, oqs.idxs], oqs, ω - p)
                 @views ginv[oqs.idxs, oqs.idxs] .+= oqs.liou
                 @inbounds for j in axes(ginv, 1)
@@ -253,16 +254,19 @@ function selfconsistency!(
                     end
                 end
                 @views tmp2 .= tmp1[oqs.idxs, oqs.idxs]
+                #println(p - ω, " ", norm(tmp2 + inv((ω - p) * I - oqs.liou - self_energy(oqs, ω - p))))
+                
 
-                @inbounds for (j, left) in enumerate(cpl_l)
+                @inbounds for (j, left) in enumerate(b.cpl_q)
                     mul!(tmp1, left', tmp2)
-                    @inbounds for (k, right) in enumerate(cpl_r)
+                    @inbounds for (k, (right′, right″)) in enumerate(zip(b.cpl_c, b.cpl_q))
                         # minus sign because ginv has a wrong sign
-                        mul!(y, tmp1, right, -rS[j, k], one(eltype(y)))
+                        mul!(y, tmp1, right′, -rR[j, k], one(eltype(y)))
+                        mul!(y, tmp1, right″, -rK[j, k], one(eltype(y)))
                     end
                 end
             end
-        end
+        #end
    end
    return y
 end

@@ -64,14 +64,45 @@ Creates a BosonicBath object from spectral density `J`, temperature `T`, and lis
 Function `J` must return a square matrix, it's size must coincide with length of `cpl`.
 """
 function BosonicBath(cpl, J :: Function, T :: Real, Ω :: Real, counterterm :: Bool = false)
-    R = aaa_real_axis(PoleInterpolation, Ω, x -> J(x) / x)
-    K = aaa_real_axis(PoleInterpolation, Ω, x -> J(x) * coth(x / (2 * T)))
-    retardize!(R)
-    retardize!(K)
+    #R = aaa_real_axis(PoleInterpolation, Ω, x -> J(x) / x)
+    #K = aaa_real_axis(PoleInterpolation, Ω, x -> J(x) * coth(x / (2 * T)))
+    RK = aaa_real_axis(PoleInterpolation, Ω, x -> hcat(J(x) / x, J(x) * coth(x / (2 * T))); aaa_split = (n -> max(20 - n, 3)), res_eps = 1e-10)
+    retardize!(RK)
+    #retardize!(K)
+    R = PoleInterpolation(
+        RK.poles,
+        RK.residues[:, 1 : size(RK.residues, 1), :],
+        RK.cnst[:, 1 : size(RK.residues, 1)]
+    )
+    K = PoleInterpolation(
+        RK.poles,
+        RK.residues[:, 1 + size(RK.residues, 1) : end, :],
+        RK.cnst[:, 1 + size(RK.residues, 1) : end]
+    )
+
     for i in eachindex(R.poles)
         slice(R.residues, i) .*= -im * R.poles[i]
     end
     K.residues .*= -im
+
+    # symmetrize
+    for (i, p) in enumerate(R.poles)
+        if iszero(real(p))
+            slice(R.residues, i) .= antihermitian_part(slice(R.residues, i))
+            slice(K.residues, i) .= hermitian_part(slice(K.residues, i))
+        else
+            _, j = findmin(z -> abs(z + conj(p)), R.poles)
+            if j > i
+                q = R.poles[j]
+                R.poles[i] = (p - conj(q)) / 2.0
+                R.poles[j] = -conj(R.poles[i])
+                slice(R.residues, i) .= (slice(R.residues, i) - slice(R.residues, j)') / 2.0
+                slice(R.residues, j) .= -slice(R.residues, i)'
+                slice(K.residues, i) .= (slice(K.residues, i) + slice(K.residues, j)') / 2.0
+                slice(K.residues, j) .= slice(K.residues, i)'
+            end
+        end
+    end
     if counterterm
         R.cnst .-= R(0.0)
     end

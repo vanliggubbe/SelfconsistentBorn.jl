@@ -50,3 +50,6 @@ intermediate(a :: Complex, b :: Complex, n :: Int) = exp.(
 #evaluate!(y, f :: Function, x :: AbstractArray) = map!(f, y, x)
 
 minusconj(x) = -conj(x)
+
+hermitian_part(a) = (a + a') / 2
+antihermitian_part(a) = (a - a') / 2
